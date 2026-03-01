@@ -1,0 +1,52 @@
+exchange:
+  name: bybit
+  api_key: ""                    # Set via BYBIT_API_KEY env var or fill in here
+  api_secret: ""                 # Set via BYBIT_API_SECRET env var or fill in here
+  testnet: true                  # ALWAYS start with testnet
+  rate_limit: true
+
+pairs:
+  - symbol: "BTC/USDT:USDT"     # Bybit USDT perpetual
+    market_type: futures
+    timeframe: "1h"
+    leverage: 5
+
+  - symbol: "ETH/USDT:USDT"
+    market_type: futures
+    timeframe: "1h"
+    leverage: 3
+
+  - symbol: "BTC/USDT"          # Spot trading
+    market_type: spot
+    timeframe: "4h"
+    leverage: 1
+
+strategy:
+  name: momentum
+  params:
+    fast_ema: 12
+    slow_ema: 26
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    lookback_bars: 100
+
+risk:
+  max_position_size_pct: 0.02   # Risk 2% of equity per trade
+  max_open_positions: 3
+  max_drawdown_pct: 0.10        # Halt trading at 10% drawdown
+  default_stop_loss_pct: 0.02
+  default_take_profit_pct: 0.04
+  position_sizing_method: "fixed_fraction"
+
+backtest:
+  start_date: "2024-01-01"
+  end_date: "2025-01-01"
+  initial_capital: 10000.0
+  commission_pct: 0.001         # 0.1% taker fee
+  slippage_pct: 0.0005          # 0.05% slippage
+
+log_level: "INFO"

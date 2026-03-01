@@ -1,0 +1,13 @@
+[project]
+name = "algo-trading"
+version = "0.1.0"
+description = "Algorithmic trading bot for Bybit (Spot + USDT Perpetual)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

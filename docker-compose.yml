@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    container_name: algo-trading-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Config — монтируем свой конфиг внутрь контейнера
+      - ./config/settings.yaml:/app/config/settings.yaml:ro
+      # Data и логи — сохраняются между рестартами
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: ["scripts/run_live.py", "--mode", "paper"]
+    # Для live торговли замени на:
+    # command: ["scripts/run_live.py", "--mode", "live"]

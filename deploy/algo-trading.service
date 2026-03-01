@@ -1,0 +1,25 @@
+[Unit]
+Description=Algo Trading Bot (Bybit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/opt/algo_trading
+EnvironmentFile=/opt/algo_trading/.env
+ExecStart=/opt/algo_trading/venv/bin/python scripts/run_live.py --mode paper
+Restart=always
+RestartSec=30
+
+# Graceful shutdown (SIGINT = Ctrl+C)
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=algo-trading
+
+[Install]
+WantedBy=multi-user.target
