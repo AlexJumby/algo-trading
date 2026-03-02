@@ -40,19 +40,23 @@ class TelegramNotifier:
     # ------------------------------------------------------------------
 
     def send(self, message: str) -> None:
-        """Send a markdown message. Silently swallows errors."""
+        """Send an HTML message. Silently swallows errors."""
         if not self.enabled or not self._client:
             return
         try:
-            self._client.post(
+            resp = self._client.post(
                 self.API_URL.format(token=self.token),
                 json={
                     "chat_id": self.chat_id,
                     "text": message,
-                    "parse_mode": "Markdown",
+                    "parse_mode": "HTML",
                     "disable_web_page_preview": True,
                 },
             )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Telegram API {resp.status_code}: {resp.text[:200]}"
+                )
         except Exception as e:
             logger.warning(f"Telegram send failed: {e}")
 
@@ -63,11 +67,12 @@ class TelegramNotifier:
     def notify_engine_start(
         self, pairs: list[str], strategy: str, mode: str,
     ) -> None:
+        pairs_str = ", ".join(f"<code>{p}</code>" for p in pairs)
         msg = (
-            "*Bot Started*\n"
-            f"Mode: `{mode}`\n"
-            f"Strategy: `{strategy}`\n"
-            f"Pairs: {', '.join(f'`{p}`' for p in pairs)}\n"
+            "<b>Bot Started</b>\n"
+            f"Mode: <code>{mode}</code>\n"
+            f"Strategy: <code>{strategy}</code>\n"
+            f"Pairs: {pairs_str}\n"
             f"Time: {_now()}"
         )
         self.send(msg)
@@ -76,13 +81,14 @@ class TelegramNotifier:
         self, symbol: str, side: str, qty: float, price: float,
         sl: float | None, equity: float,
     ) -> None:
+        icon = "🟢" if side == "buy" else "🔴"
         sl_str = f"${sl:,.2f}" if sl else "trailing"
         msg = (
-            f"*Trade Opened*\n"
-            f"{'🟢' if side == 'buy' else '🔴'} `{side.upper()}` `{symbol}`\n"
-            f"Qty: `{qty:.6f}` @ `${price:,.2f}`\n"
-            f"SL: `{sl_str}`\n"
-            f"Equity: `${equity:,.2f}`"
+            f"<b>Trade Opened</b>\n"
+            f"{icon} <code>{side.upper()}</code> <code>{symbol}</code>\n"
+            f"Qty: <code>{qty:.6f}</code> @ <code>${price:,.2f}</code>\n"
+            f"SL: <code>{sl_str}</code>\n"
+            f"Equity: <code>${equity:,.2f}</code>"
         )
         self.send(msg)
 
@@ -93,11 +99,13 @@ class TelegramNotifier:
     ) -> None:
         emoji = "✅" if pnl >= 0 else "❌"
         msg = (
-            f"*Trade Closed* ({trigger})\n"
-            f"{emoji} `{side.upper()}` `{symbol}`\n"
-            f"Entry: `${entry_price:,.2f}` → Exit: `${exit_price:,.2f}`\n"
-            f"PnL: `${pnl:,.2f}`\n"
-            f"Equity: `${equity:,.2f}` | DD: `{drawdown:.1%}`"
+            f"<b>Trade Closed</b> ({trigger})\n"
+            f"{emoji} <code>{side.upper()}</code> <code>{symbol}</code>\n"
+            f"Entry: <code>${entry_price:,.2f}</code> → "
+            f"Exit: <code>${exit_price:,.2f}</code>\n"
+            f"PnL: <code>${pnl:,.2f}</code>\n"
+            f"Equity: <code>${equity:,.2f}</code> | "
+            f"DD: <code>{drawdown:.1%}</code>"
         )
         self.send(msg)
 
@@ -106,9 +114,9 @@ class TelegramNotifier:
     ) -> None:
         old_str = f"${old_sl:,.2f}" if old_sl else "None"
         msg = (
-            f"*Trailing Stop Updated*\n"
-            f"`{symbol}` @ `${price:,.2f}`\n"
-            f"SL: `{old_str}` → `${new_sl:,.2f}`"
+            f"<b>Trailing Stop Updated</b>\n"
+            f"<code>{symbol}</code> @ <code>${price:,.2f}</code>\n"
+            f"SL: <code>{old_str}</code> → <code>${new_sl:,.2f}</code>"
         )
         self.send(msg)
 
@@ -117,29 +125,30 @@ class TelegramNotifier:
         open_positions: dict, closed_count: int,
     ) -> None:
         lines = [
-            f"*Status Report* ({_now()})",
-            f"Equity: `${equity:,.2f}`",
-            f"Cash: `${cash:,.2f}`",
-            f"Drawdown: `{drawdown:.1%}`",
-            f"Open: `{len(open_positions)}` | Closed: `{closed_count}`",
+            f"<b>Status Report</b> ({_now()})",
+            f"Equity: <code>${equity:,.2f}</code>",
+            f"Cash: <code>${cash:,.2f}</code>",
+            f"Drawdown: <code>{drawdown:.1%}</code>",
+            f"Open: <code>{len(open_positions)}</code> | "
+            f"Closed: <code>{closed_count}</code>",
         ]
         for sym, pos in open_positions.items():
+            sl_str = f" sl=<code>${pos.stop_loss:,.2f}</code>" if pos.stop_loss else ""
             lines.append(
-                f"  `{sym}`: {pos.side.value} "
-                f"pnl=`${pos.unrealized_pnl:,.2f}` "
-                f"sl=`${pos.stop_loss:,.2f}`" if pos.stop_loss else
-                f"  `{sym}`: {pos.side.value} pnl=`${pos.unrealized_pnl:,.2f}`"
+                f"  <code>{sym}</code>: {pos.side.value} "
+                f"pnl=<code>${pos.unrealized_pnl:,.2f}</code>{sl_str}"
             )
         self.send("\n".join(lines))
 
     def notify_error(self, error_msg: str) -> None:
-        msg = f"*Error*\n```\n{error_msg[:500]}\n```"
+        safe_msg = error_msg[:500].replace("<", "&lt;").replace(">", "&gt;")
+        msg = f"<b>Error</b>\n<pre>{safe_msg}</pre>"
         self.send(msg)
 
     def notify_max_drawdown_halt(self, drawdown_pct: float) -> None:
         msg = (
-            f"*MAX DRAWDOWN HALT*\n"
-            f"Drawdown: `{drawdown_pct:.1%}`\n"
+            f"<b>MAX DRAWDOWN HALT</b>\n"
+            f"Drawdown: <code>{drawdown_pct:.1%}</code>\n"
             f"New trades suspended!"
         )
         self.send(msg)

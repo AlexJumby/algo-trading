@@ -43,16 +43,18 @@ class TestTelegramNotifier:
             "TELEGRAM_CHAT_ID": "-100123",
         }):
             notifier = TelegramNotifier()
-            notifier._client = MagicMock()
+            mock_client = MagicMock()
+            mock_client.post.return_value.status_code = 200
+            notifier._client = mock_client
 
             notifier.send("Test message")
 
-            notifier._client.post.assert_called_once()
-            call_args = notifier._client.post.call_args
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
             assert "123:ABC" in call_args[0][0]
             assert call_args[1]["json"]["chat_id"] == "-100123"
             assert call_args[1]["json"]["text"] == "Test message"
-            assert call_args[1]["json"]["parse_mode"] == "Markdown"
+            assert call_args[1]["json"]["parse_mode"] == "HTML"
 
     def test_send_swallows_exceptions(self):
         """send() should never raise, even if HTTP fails."""
