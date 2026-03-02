@@ -31,7 +31,9 @@
       "Bash(python3 scripts/finetune_tsmom.py)",
       "Bash(python3 scripts/run_backtest.py)",
       "Bash(python3 scripts/fetch_historical.py --symbol \"ETH/USDT:USDT\" --days 730 --output data/ETHUSDT_USDT_1h.csv)",
-      "Bash(python3 scripts/validate_strategy.py)"
+      "Bash(python3 scripts/validate_strategy.py)",
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "Bash(python3 -m pytest tests/ -v --tb=short)"
     ]
   }
 }

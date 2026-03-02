@@ -163,3 +163,17 @@ class BybitClient(ExchangeClient):
         except ccxt.BaseError as e:
             # Some exchanges throw if leverage is already set
             logger.warning(f"Set leverage warning for {symbol}: {e}")
+
+    def update_trading_stop(self, symbol: str, stop_loss: float) -> None:
+        """Update stop-loss on an existing position (for trailing stop)."""
+        try:
+            market = self.exchange.market(symbol)
+            self.exchange.private_post_v5_position_trading_stop({
+                "category": "linear",
+                "symbol": market["id"],
+                "stopLoss": str(round(stop_loss, 2)),
+                "positionIdx": 0,  # one-way mode
+            })
+            logger.debug(f"Updated trading stop for {symbol}: SL={stop_loss:.2f}")
+        except ccxt.BaseError as e:
+            raise ExchangeError(f"Failed to update trading stop for {symbol}: {e}") from e

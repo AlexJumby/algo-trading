@@ -4,14 +4,15 @@ import signal
 import sys
 import time
 
+import pandas as pd
 from rich.console import Console
-from rich.live import Live
 from rich.table import Table
 
 from src.core.config import AppConfig, TradingPairConfig
-from src.core.enums import MarketType
+from src.core.enums import MarketType, Side
 from src.data.feed import CcxtDataFeed
 from src.execution.broker import Broker
+from src.execution.paper_broker import PaperBroker
 from src.exchange.bybit_client import BybitClient
 from src.portfolio.tracker import PortfolioTracker
 from src.risk.manager import RiskManager
@@ -50,6 +51,15 @@ class LiveEngine:
         self.config = config
         self.exchange_client = exchange_client
         self._running = False
+        self._halted = False  # Max drawdown halt
+
+        # Trailing stop config from strategy params
+        self._trail_mult = config.strategy.params.get("trailing_atr_mult", 0)
+        self._atr_period = config.strategy.params.get("atr_period", 14)
+        self._atr_col = f"atr_{self._atr_period}" if self._trail_mult > 0 else None
+
+        # Max drawdown threshold
+        self._max_dd = config.risk.max_drawdown_pct
 
     def run(self) -> None:
         self._running = True
@@ -70,11 +80,16 @@ class LiveEngine:
                     except Exception as e:
                         logger.warning(f"Could not set leverage for {pair.symbol}: {e}")
 
+        # Sync existing positions from exchange on startup
+        self._sync_positions(pairs)
+
         console.print(f"[bold green]Live engine started[/bold green]")
         console.print(f"  Pairs: {[p.symbol for p in pairs]}")
         console.print(f"  Timeframe: {timeframe}")
         console.print(f"  Strategy: {self.config.strategy.name}")
         console.print(f"  Poll interval: {poll_interval}s")
+        console.print(f"  Trailing stop: {self._trail_mult}x ATR({self._atr_period})")
+        console.print(f"  Max drawdown halt: {self._max_dd:.0%}")
         console.print()
 
         while self._running:
@@ -96,7 +111,39 @@ class LiveEngine:
 
         logger.info("Live engine stopped")
 
+    def _sync_positions(self, pairs: list[TradingPairConfig]) -> None:
+        """Sync open positions from exchange on startup (recover from restarts)."""
+        if not self.exchange_client:
+            return
+
+        try:
+            exchange_positions = self.exchange_client.fetch_positions()
+            pair_symbols = {p.symbol for p in pairs}
+
+            for pos in exchange_positions:
+                if pos.symbol not in pair_symbols:
+                    continue
+                if pos.symbol in self.portfolio.open_positions:
+                    continue
+
+                self.portfolio.open_positions[pos.symbol] = pos
+                logger.info(
+                    f"Synced position: {pos.side.value} {pos.symbol} "
+                    f"qty={pos.quantity:.6f} entry={pos.entry_price:.2f} "
+                    f"sl={pos.stop_loss}"
+                )
+
+            if exchange_positions:
+                logger.info(f"Synced {len(exchange_positions)} position(s) from exchange")
+            else:
+                logger.info("No open positions on exchange")
+        except Exception as e:
+            logger.warning(f"Could not sync positions: {e}")
+
     def _tick(self, pairs: list[TradingPairConfig], lookback: int) -> None:
+        now_ms = int(time.time() * 1000)
+        prices: dict[str, float] = {}
+
         for pair in pairs:
             symbol = pair.symbol
             timeframe = pair.timeframe
@@ -109,15 +156,45 @@ class LiveEngine:
                     continue
 
                 current_price = self.data_feed.get_current_price(symbol)
+                prices[symbol] = current_price
 
                 # Apply indicators and generate signals
                 df = self.strategy.apply_indicators(df)
-                signals = self.strategy.generate_signals(df)
 
                 # Update prices for portfolio tracking
                 self.portfolio.update_prices({symbol: current_price})
 
-                # Process signals
+                # --- Trailing stop: move SL in profit direction ---
+                if self._trail_mult > 0 and self._atr_col and self._atr_col in df.columns:
+                    last_row = df.iloc[-1]
+                    if not pd.isna(last_row.get(self._atr_col)):
+                        atr_val = float(last_row[self._atr_col])
+                        self._trail_stops(symbol, current_price, atr_val)
+
+                # --- Check stops (paper mode) ---
+                if isinstance(self.broker, PaperBroker):
+                    stop_fills = self.broker.check_stops(
+                        self.portfolio, {symbol: current_price}, now_ms,
+                    )
+                    for fill in stop_fills:
+                        self.portfolio.on_fill(fill)
+                        self.strategy.on_fill(fill)
+
+                # --- Max drawdown halt ---
+                if self._halted:
+                    continue
+
+                if self.portfolio.current_drawdown_pct >= self._max_dd:
+                    logger.warning(
+                        f"MAX DRAWDOWN {self.portfolio.current_drawdown_pct:.1%} "
+                        f">= {self._max_dd:.0%} — halting new trades!"
+                    )
+                    self._halted = True
+                    continue
+
+                # --- Generate signals and trade ---
+                signals = self.strategy.generate_signals(df)
+
                 for signal_obj in signals:
                     signal_obj.symbol = symbol
                     order = self.risk_mgr.evaluate(signal_obj, current_price)
@@ -128,12 +205,45 @@ class LiveEngine:
                         if fill:
                             self.portfolio.on_fill(fill)
                             self.strategy.on_fill(fill)
+                            # Store SL/TP on the portfolio position
+                            if symbol in self.portfolio.open_positions:
+                                pos = self.portfolio.open_positions[symbol]
+                                pos.stop_loss = order.stop_loss
+                                pos.take_profit = order.take_profit
 
                 # Take snapshot
-                self.portfolio.take_snapshot(int(time.time() * 1000))
+                self.portfolio.take_snapshot(now_ms)
 
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}", exc_info=True)
+
+    def _trail_stops(self, symbol: str, price: float, atr: float) -> None:
+        """Move stop-loss in the direction of profit (trailing stop)."""
+        if symbol not in self.portfolio.open_positions:
+            return
+        pos = self.portfolio.open_positions[symbol]
+        old_sl = pos.stop_loss
+
+        if pos.side == Side.BUY:
+            new_sl = price - atr * self._trail_mult
+            if old_sl is None or new_sl > old_sl:
+                pos.stop_loss = new_sl
+        else:
+            new_sl = price + atr * self._trail_mult
+            if old_sl is None or new_sl < old_sl:
+                pos.stop_loss = new_sl
+
+        if pos.stop_loss != old_sl:
+            logger.info(
+                f"Trailing stop updated {symbol}: "
+                f"{old_sl:.2f if old_sl else 'None'} -> {pos.stop_loss:.2f}"
+            )
+            # For live mode: update stop on exchange
+            if not isinstance(self.broker, PaperBroker) and self.exchange_client:
+                try:
+                    self.exchange_client.update_trading_stop(symbol, pos.stop_loss)
+                except Exception as e:
+                    logger.warning(f"Could not update exchange stop for {symbol}: {e}")
 
     def _print_status(self) -> None:
         table = Table(title="Portfolio Status", show_lines=True)
@@ -145,12 +255,15 @@ class LiveEngine:
         table.add_row("Open Positions", str(len(self.portfolio.open_positions)))
         table.add_row("Closed Trades", str(len(self.portfolio.closed_trades)))
         table.add_row("Drawdown", f"{self.portfolio.current_drawdown_pct:.2%}")
+        if self._halted:
+            table.add_row("STATUS", "[bold red]HALTED (max drawdown)[/bold red]")
 
         for symbol, pos in self.portfolio.open_positions.items():
+            sl_str = f"sl={pos.stop_loss:.2f}" if pos.stop_loss else "sl=None"
             table.add_row(
                 f"  {symbol}",
                 f"{pos.side.value} qty={pos.quantity:.6f} "
-                f"entry={pos.entry_price:.2f} pnl={pos.unrealized_pnl:.2f}"
+                f"entry={pos.entry_price:.2f} pnl={pos.unrealized_pnl:.2f} {sl_str}"
             )
 
         console.print(table)
