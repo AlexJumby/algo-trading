@@ -308,7 +308,8 @@
 
         function fmtDate(ts) {
             if (!ts) return '--';
-            const d = new Date(ts * 1000);
+            // timestamp already in milliseconds from the bot
+            const d = new Date(ts);
             return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
         }
 
