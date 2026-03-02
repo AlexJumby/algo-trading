@@ -30,6 +30,9 @@ TIMEFRAME_SECONDS = {
 }
 
 
+STOP_CHECK_INTERVAL = 300  # Check stops every 5 minutes between candles
+
+
 class LiveEngine:
     """Live/paper trading engine. Polls on each candle close."""
 
@@ -97,11 +100,20 @@ class LiveEngine:
                 self._tick(pairs, lookback)
                 self._print_status()
 
+                # Sleep until next candle, but check stops every 5 min
                 logger.info(f"Sleeping {poll_interval}s until next candle")
-                for _ in range(poll_interval):
-                    if not self._running:
-                        break
-                    time.sleep(1)
+                elapsed = 0
+                while elapsed < poll_interval and self._running:
+                    sleep_chunk = min(STOP_CHECK_INTERVAL, poll_interval - elapsed)
+                    for _ in range(sleep_chunk):
+                        if not self._running:
+                            break
+                        time.sleep(1)
+                    elapsed += sleep_chunk
+
+                    # Mid-candle stop check (only if we have open positions)
+                    if self._running and elapsed < poll_interval and self.portfolio.open_positions:
+                        self._check_stops_quick(pairs)
 
             except KeyboardInterrupt:
                 break
@@ -216,6 +228,30 @@ class LiveEngine:
 
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}", exc_info=True)
+
+    def _check_stops_quick(self, pairs: list[TradingPairConfig]) -> None:
+        """Quick mid-candle stop check — only fetch price + check SL/TP."""
+        if not isinstance(self.broker, PaperBroker):
+            return  # Live mode: exchange handles stops
+
+        now_ms = int(time.time() * 1000)
+        for pair in pairs:
+            symbol = pair.symbol
+            if symbol not in self.portfolio.open_positions:
+                continue
+            try:
+                price = self.data_feed.get_current_price(symbol)
+                self.portfolio.update_prices({symbol: price})
+
+                stop_fills = self.broker.check_stops(
+                    self.portfolio, {symbol: price}, now_ms,
+                )
+                for fill in stop_fills:
+                    self.portfolio.on_fill(fill)
+                    self.strategy.on_fill(fill)
+                    logger.info(f"[MID-CANDLE] Stop triggered for {symbol} at {price:.2f}")
+            except Exception as e:
+                logger.debug(f"Mid-candle check failed for {symbol}: {e}")
 
     def _trail_stops(self, symbol: str, price: float, atr: float) -> None:
         """Move stop-loss in the direction of profit (trailing stop)."""
