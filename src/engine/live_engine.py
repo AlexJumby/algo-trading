@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import signal
-import sys
 import time
 
 import pandas as pd
@@ -14,6 +13,7 @@ from src.data.feed import CcxtDataFeed
 from src.execution.broker import Broker
 from src.execution.paper_broker import PaperBroker
 from src.exchange.bybit_client import BybitClient
+from src.notifications.telegram import TelegramNotifier
 from src.portfolio.tracker import PortfolioTracker
 from src.risk.manager import RiskManager
 from src.strategies.base import BaseStrategy
@@ -29,8 +29,8 @@ TIMEFRAME_SECONDS = {
     "6h": 21600, "12h": 43200, "1d": 86400,
 }
 
-
 STOP_CHECK_INTERVAL = 300  # Check stops every 5 minutes between candles
+STATUS_INTERVAL = 4 * 3600  # Periodic Telegram status every 4 hours
 
 
 class LiveEngine:
@@ -45,6 +45,7 @@ class LiveEngine:
         portfolio: PortfolioTracker,
         config: AppConfig,
         exchange_client: BybitClient | None = None,
+        notifier: TelegramNotifier | None = None,
     ):
         self.data_feed = data_feed
         self.strategy = strategy
@@ -53,8 +54,9 @@ class LiveEngine:
         self.portfolio = portfolio
         self.config = config
         self.exchange_client = exchange_client
+        self.notifier = notifier
         self._running = False
-        self._halted = False  # Max drawdown halt
+        self._halted = False
 
         # Trailing stop config from strategy params
         self._trail_mult = config.strategy.params.get("trailing_atr_mult", 0)
@@ -63,6 +65,9 @@ class LiveEngine:
 
         # Max drawdown threshold
         self._max_dd = config.risk.max_drawdown_pct
+
+        # Periodic status timer
+        self._last_status_time = 0.0
 
     def run(self) -> None:
         self._running = True
@@ -73,6 +78,7 @@ class LiveEngine:
         timeframe = pairs[0].timeframe
         poll_interval = TIMEFRAME_SECONDS.get(timeframe, 3600)
         lookback = self.config.strategy.params.get("lookback_bars", 100)
+        mode = "paper" if isinstance(self.broker, PaperBroker) else "live"
 
         # Set leverage for futures pairs
         if self.exchange_client:
@@ -86,7 +92,7 @@ class LiveEngine:
         # Sync existing positions from exchange on startup
         self._sync_positions(pairs)
 
-        console.print(f"[bold green]Live engine started[/bold green]")
+        console.print("[bold green]Live engine started[/bold green]")
         console.print(f"  Pairs: {[p.symbol for p in pairs]}")
         console.print(f"  Timeframe: {timeframe}")
         console.print(f"  Strategy: {self.config.strategy.name}")
@@ -95,10 +101,27 @@ class LiveEngine:
         console.print(f"  Max drawdown halt: {self._max_dd:.0%}")
         console.print()
 
+        # Telegram: engine started
+        if self.notifier:
+            self.notifier.notify_engine_start(
+                [p.symbol for p in pairs], self.config.strategy.name, mode,
+            )
+        self._last_status_time = time.time()
+
         while self._running:
             try:
                 self._tick(pairs, lookback)
                 self._print_status()
+
+                # Periodic Telegram status (every 4h)
+                if self.notifier and time.time() - self._last_status_time >= STATUS_INTERVAL:
+                    self.notifier.notify_status(
+                        self.portfolio.equity, self.portfolio.cash,
+                        self.portfolio.current_drawdown_pct,
+                        self.portfolio.open_positions,
+                        len(self.portfolio.closed_trades),
+                    )
+                    self._last_status_time = time.time()
 
                 # Sleep until next candle, but check stops every 5 min
                 logger.info(f"Sleeping {poll_interval}s until next candle")
@@ -119,6 +142,8 @@ class LiveEngine:
                 break
             except Exception as e:
                 logger.error(f"Error in trading loop: {e}", exc_info=True)
+                if self.notifier:
+                    self.notifier.notify_error(str(e))
                 time.sleep(30)
 
         logger.info("Live engine stopped")
@@ -154,7 +179,6 @@ class LiveEngine:
 
     def _tick(self, pairs: list[TradingPairConfig], lookback: int) -> None:
         now_ms = int(time.time() * 1000)
-        prices: dict[str, float] = {}
 
         for pair in pairs:
             symbol = pair.symbol
@@ -168,9 +192,8 @@ class LiveEngine:
                     continue
 
                 current_price = self.data_feed.get_current_price(symbol)
-                prices[symbol] = current_price
 
-                # Apply indicators and generate signals
+                # Apply indicators
                 df = self.strategy.apply_indicators(df)
 
                 # Update prices for portfolio tracking
@@ -189,8 +212,19 @@ class LiveEngine:
                         self.portfolio, {symbol: current_price}, now_ms,
                     )
                     for fill in stop_fills:
+                        # Get trade info before on_fill removes the position
+                        closed_pos = self.portfolio.open_positions.get(symbol)
                         self.portfolio.on_fill(fill)
                         self.strategy.on_fill(fill)
+                        # Telegram: trade closed by stop
+                        if self.notifier and closed_pos:
+                            self.notifier.notify_trade_close(
+                                symbol, closed_pos.side.value, closed_pos.quantity,
+                                closed_pos.entry_price, fill.price,
+                                self.portfolio.closed_trades[-1]["pnl"] if self.portfolio.closed_trades else 0,
+                                "SL", self.portfolio.equity,
+                                self.portfolio.current_drawdown_pct,
+                            )
 
                 # --- Max drawdown halt ---
                 if self._halted:
@@ -202,6 +236,10 @@ class LiveEngine:
                         f">= {self._max_dd:.0%} — halting new trades!"
                     )
                     self._halted = True
+                    if self.notifier:
+                        self.notifier.notify_max_drawdown_halt(
+                            self.portfolio.current_drawdown_pct,
+                        )
                     continue
 
                 # --- Generate signals and trade ---
@@ -217,22 +255,43 @@ class LiveEngine:
                         if fill:
                             self.portfolio.on_fill(fill)
                             self.strategy.on_fill(fill)
+
                             # Store SL/TP on the portfolio position
                             if symbol in self.portfolio.open_positions:
                                 pos = self.portfolio.open_positions[symbol]
                                 pos.stop_loss = order.stop_loss
                                 pos.take_profit = order.take_profit
+                                # Telegram: trade opened
+                                if self.notifier:
+                                    self.notifier.notify_trade_open(
+                                        symbol, fill.side.value, fill.quantity,
+                                        fill.price, order.stop_loss,
+                                        self.portfolio.equity,
+                                    )
+                            else:
+                                # Position was closed (exit signal)
+                                if self.notifier and self.portfolio.closed_trades:
+                                    last_trade = self.portfolio.closed_trades[-1]
+                                    self.notifier.notify_trade_close(
+                                        symbol, last_trade["side"], last_trade["quantity"],
+                                        last_trade["entry_price"], last_trade["exit_price"],
+                                        last_trade["pnl"], "signal",
+                                        self.portfolio.equity,
+                                        self.portfolio.current_drawdown_pct,
+                                    )
 
                 # Take snapshot
                 self.portfolio.take_snapshot(now_ms)
 
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}", exc_info=True)
+                if self.notifier:
+                    self.notifier.notify_error(f"{symbol}: {e}")
 
     def _check_stops_quick(self, pairs: list[TradingPairConfig]) -> None:
         """Quick mid-candle stop check — only fetch price + check SL/TP."""
         if not isinstance(self.broker, PaperBroker):
-            return  # Live mode: exchange handles stops
+            return
 
         now_ms = int(time.time() * 1000)
         for pair in pairs:
@@ -243,6 +302,7 @@ class LiveEngine:
                 price = self.data_feed.get_current_price(symbol)
                 self.portfolio.update_prices({symbol: price})
 
+                closed_pos = self.portfolio.open_positions.get(symbol)
                 stop_fills = self.broker.check_stops(
                     self.portfolio, {symbol: price}, now_ms,
                 )
@@ -250,6 +310,14 @@ class LiveEngine:
                     self.portfolio.on_fill(fill)
                     self.strategy.on_fill(fill)
                     logger.info(f"[MID-CANDLE] Stop triggered for {symbol} at {price:.2f}")
+                    if self.notifier and closed_pos:
+                        self.notifier.notify_trade_close(
+                            symbol, closed_pos.side.value, closed_pos.quantity,
+                            closed_pos.entry_price, fill.price,
+                            self.portfolio.closed_trades[-1]["pnl"] if self.portfolio.closed_trades else 0,
+                            "SL (mid-candle)", self.portfolio.equity,
+                            self.portfolio.current_drawdown_pct,
+                        )
             except Exception as e:
                 logger.debug(f"Mid-candle check failed for {symbol}: {e}")
 
@@ -274,6 +342,9 @@ class LiveEngine:
                 f"Trailing stop updated {symbol}: "
                 f"{old_sl:.2f if old_sl else 'None'} -> {pos.stop_loss:.2f}"
             )
+            # Telegram: trailing stop moved (only log significant moves)
+            if self.notifier:
+                self.notifier.notify_trailing_stop(symbol, old_sl, pos.stop_loss, price)
             # For live mode: update stop on exchange
             if not isinstance(self.broker, PaperBroker) and self.exchange_client:
                 try:

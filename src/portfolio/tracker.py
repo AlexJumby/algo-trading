@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from src.core.enums import Side
 from src.core.models import Fill, Position, PortfolioSnapshot
 from src.utils.logger import get_trade_logger
+
+if TYPE_CHECKING:
+    from src.portfolio.persistence import PortfolioDB
 
 trade_logger = get_trade_logger()
 
@@ -19,14 +24,19 @@ class PortfolioTracker:
         - open_entry_fees: fees paid to open currently-held positions
     """
 
-    def __init__(self, initial_capital: float):
+    def __init__(self, initial_capital: float, db: PortfolioDB | None = None):
         self.initial_capital = initial_capital
+        self.db = db
         self.open_positions: dict[str, Position] = {}
         self.closed_trades: list[dict] = []
         self.equity_curve: list[PortfolioSnapshot] = []
         self._realized_pnl = 0.0
         self._total_fees = 0.0
         self._position_entry_fees: dict[str, float] = {}
+
+        # Restore state from DB if available
+        if db:
+            self._restore_from_db()
 
     # ------------------------------------------------------------------
     # Properties
@@ -97,7 +107,7 @@ class PortfolioTracker:
                     # Partial close
                     self._position_entry_fees[symbol] -= entry_fee_portion
                     pos.quantity -= close_qty
-                    self.closed_trades.append({
+                    trade_dict = {
                         "symbol": symbol,
                         "side": pos.side.value,
                         "entry_price": pos.entry_price,
@@ -106,7 +116,11 @@ class PortfolioTracker:
                         "pnl": net_pnl,
                         "fee": total_trade_fee,
                         "timestamp": fill.timestamp,
-                    })
+                    }
+                    self.closed_trades.append(trade_dict)
+                    if self.db:
+                        self.db.save_trade(trade_dict)
+                        self.db.save_open_positions(self.open_positions)
                 return
 
             # ---- Adding to existing position (same side) ----
@@ -136,6 +150,22 @@ class PortfolioTracker:
             )
 
     # ------------------------------------------------------------------
+    # DB restore
+    # ------------------------------------------------------------------
+
+    def _restore_from_db(self) -> None:
+        """Restore realized PnL and trade history from SQLite on startup."""
+        if not self.db:
+            return
+        self._realized_pnl = self.db.get_total_realized_pnl()
+        self._total_fees = self.db.get_total_fees()
+        self.closed_trades = self.db.get_trades(limit=50000)
+        trade_logger.info(
+            f"Restored from DB: {len(self.closed_trades)} trades, "
+            f"realized_pnl=${self._realized_pnl:.2f}"
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -151,7 +181,7 @@ class PortfolioTracker:
         self, symbol: str, pnl: float, fee: float, fill: Fill,
     ) -> None:
         pos = self.open_positions.pop(symbol)
-        self.closed_trades.append({
+        trade_dict = {
             "symbol": symbol,
             "side": pos.side.value,
             "entry_price": pos.entry_price,
@@ -160,11 +190,15 @@ class PortfolioTracker:
             "pnl": pnl,
             "fee": fee,
             "timestamp": fill.timestamp,
-        })
+        }
+        self.closed_trades.append(trade_dict)
         trade_logger.info(
             f"CLOSE {pos.side.value} {symbol} qty={pos.quantity:.6f} "
             f"entry={pos.entry_price:.2f} exit={fill.price:.2f} pnl={pnl:.2f}"
         )
+        if self.db:
+            self.db.save_trade(trade_dict)
+            self.db.save_open_positions(self.open_positions)
 
     # ------------------------------------------------------------------
     # Price updates & snapshots
@@ -185,4 +219,7 @@ class PortfolioTracker:
             positions_count=len(self.open_positions),
         )
         self.equity_curve.append(snapshot)
+        if self.db:
+            self.db.save_snapshot(snapshot)
+            self.db.save_open_positions(self.open_positions)
         return snapshot

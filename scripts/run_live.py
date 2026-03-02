@@ -19,6 +19,8 @@ from src.engine.live_engine import LiveEngine
 from src.exchange.bybit_client import BybitClient
 from src.execution.live_broker import LiveBroker
 from src.execution.paper_broker import PaperBroker
+from src.notifications.telegram import TelegramNotifier
+from src.portfolio.persistence import PortfolioDB
 from src.portfolio.tracker import PortfolioTracker
 from src.risk.manager import RiskManager
 from src.strategies.momentum import STRATEGY_REGISTRY
@@ -85,8 +87,9 @@ def main():
 
     logger.info(f"Initial capital: ${initial_capital:.2f}")
 
-    # Create portfolio tracker
-    portfolio = PortfolioTracker(initial_capital)
+    # Create portfolio tracker with SQLite persistence
+    db = PortfolioDB("data/portfolio.db")
+    portfolio = PortfolioTracker(initial_capital, db=db)
 
     # Create strategy
     strategy_cls = STRATEGY_REGISTRY.get(config.strategy.name)
@@ -100,6 +103,9 @@ def main():
     # Create risk manager
     risk_mgr = RiskManager(config.risk, portfolio)
 
+    # Create Telegram notifier (optional — silent if no env vars)
+    notifier = TelegramNotifier()
+
     # Create and run engine
     engine = LiveEngine(
         data_feed=data_feed,
@@ -109,6 +115,7 @@ def main():
         portfolio=portfolio,
         config=config,
         exchange_client=client,
+        notifier=notifier,
     )
     engine.run()
 

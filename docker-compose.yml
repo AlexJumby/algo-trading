@@ -14,3 +14,19 @@ services:
     command: ["scripts/run_live.py", "--mode", "paper"]
     # Для live торговли замени на:
     # command: ["scripts/run_live.py", "--mode", "live"]
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: algo-trading-dashboard
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Shared DB — бот пишет, дашборд читает (WAL mode)
+      - ./data:/app/data:ro
+    environment:
+      - PORTFOLIO_DB_PATH=data/portfolio.db
+    depends_on:
+      - bot

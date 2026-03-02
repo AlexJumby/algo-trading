@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements-dashboard.txt .
+RUN pip install --no-cache-dir -r requirements-dashboard.txt
+
+COPY src/ src/
+
+# Create data dir (will be mounted as volume)
+RUN mkdir -p data
+
+ENV PORTFOLIO_DB_PATH="data/portfolio.db"
+
+EXPOSE 8080
+
+CMD ["uvicorn", "src.dashboard.app:app", "--host", "0.0.0.0", "--port", "8080"]
