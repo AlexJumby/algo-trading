@@ -5,7 +5,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 
-from src.core.config import AppConfig
+from src.core.config import AppConfig, bars_per_year as _bars_per_year
 from src.core.enums import Side
 from src.data.feed import HistoricalDataFeed
 from src.execution.backtest_broker import BacktestBroker
@@ -36,6 +36,17 @@ class BacktestEngine:
         self.portfolio = portfolio
         self.config = config
 
+        # Funding rate config
+        bt = config.backtest
+        self._funding_rate = bt.funding_rate_pct if bt else 0.0
+        self._funding_interval_ms = (
+            (bt.funding_interval_hours * 3600 * 1000) if bt else 8 * 3600 * 1000
+        )
+        # Track last funding timestamp per symbol
+        self._last_funding_ts: dict[str, int] = {}
+        # Accumulate total funding paid
+        self._total_funding: float = 0.0
+
     def run(self, symbol: str | None = None, silent: bool = False) -> dict:
         """Run backtest and return performance metrics.
 
@@ -52,9 +63,12 @@ class BacktestEngine:
 
         self._run_loop(symbol, lookback, silent, total_bars)
 
-        # Compute metrics
-        metrics = PerformanceMetrics(self.portfolio)
+        # Compute metrics (dynamic annualization based on timeframe)
+        tf = self.config.strategy.params.get("timeframe", "1h")
+        bpy = _bars_per_year(tf)
+        metrics = PerformanceMetrics(self.portfolio, bars_per_year=bpy)
         results = metrics.compute_all()
+        results["total_funding"] = round(self._total_funding, 2)
 
         if not silent:
             self._print_results(results, symbol)
@@ -99,6 +113,9 @@ class BacktestEngine:
                     self.portfolio.on_fill(fill)
                     self.strategy.on_fill(fill)
 
+                # Funding cost on open perpetual positions
+                self._apply_funding(symbol, current_price, timestamp)
+
                 for signal in signals:
                     signal.symbol = symbol
                     order = self.risk_mgr.evaluate(signal, current_price)
@@ -132,6 +149,38 @@ class BacktestEngine:
             new_sl = price + atr * mult
             if pos.stop_loss is None or new_sl < pos.stop_loss:
                 pos.stop_loss = new_sl
+
+    def _apply_funding(self, symbol: str, price: float, timestamp: int) -> None:
+        """Deduct funding cost for open perpetual positions.
+
+        Called every bar. Charges funding_rate for each full funding
+        interval that has elapsed since last charge.
+        """
+        if self._funding_rate <= 0:
+            return
+        if symbol not in self.portfolio.open_positions:
+            # Reset tracker when position is closed
+            self._last_funding_ts.pop(symbol, None)
+            return
+
+        pos = self.portfolio.open_positions[symbol]
+        last_ts = self._last_funding_ts.get(symbol)
+
+        if last_ts is None:
+            # First bar with position — anchor to current timestamp
+            self._last_funding_ts[symbol] = timestamp
+            return
+
+        elapsed = timestamp - last_ts
+        if elapsed >= self._funding_interval_ms:
+            periods = int(elapsed / self._funding_interval_ms)
+            notional = pos.quantity * price
+            cost = notional * self._funding_rate * periods
+            # Deduct from realized_pnl (reduces equity → reduces cash)
+            self.portfolio._realized_pnl -= cost
+            self.portfolio._total_fees += cost
+            self._total_funding += cost
+            self._last_funding_ts[symbol] = last_ts + periods * self._funding_interval_ms
 
     def _run_loop_progress(self, symbol: str, lookback: int, total_bars: int) -> None:
         """Loop with Rich progress bar for interactive use."""
@@ -213,6 +262,8 @@ class BacktestEngine:
         table.add_row("Worst Trade", f"${results['worst_trade']:.2f}")
         table.add_row("Avg Win", f"${results['avg_win']:.2f}")
         table.add_row("Avg Loss", f"${results['avg_loss']:.2f}")
+        if results.get("total_funding", 0) > 0:
+            table.add_row("Total Funding", f"${results['total_funding']:.2f}")
 
         console.print(table)
         console.print()

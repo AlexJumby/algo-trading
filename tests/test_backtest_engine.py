@@ -163,3 +163,80 @@ class TestPerformanceMetrics:
         results = metrics.compute_all()
         assert results["total_trades"] == 0
         assert results["win_rate"] == 0.0
+
+    def test_custom_bars_per_year(self):
+        """bars_per_year should be used by Sharpe/Sortino."""
+        pt = PortfolioTracker(10000.0)
+        m1 = PerformanceMetrics(pt, bars_per_year=8760)
+        m2 = PerformanceMetrics(pt, bars_per_year=2191)
+        # Both should produce 0.0 on empty tracker, but check they don't crash
+        assert m1.sharpe_ratio() == 0.0
+        assert m2.sortino_ratio() == 0.0
+
+
+class TestRealisticFees:
+    """Test BacktestBroker with maker/taker fee model."""
+
+    def test_taker_fee_applied(self):
+        from src.core.enums import OrderType, Side
+        from src.core.models import Order
+
+        broker = BacktestBroker(
+            commission=0.001, slippage=0.0,
+            taker_fee=0.00055, maker_fee=0.0002,
+        )
+        order = Order(
+            symbol="BTC/USDT", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=1.0,
+        )
+        fill = broker.submit_order(order, current_price=50000.0, timestamp=1000)
+        # Fee should be taker: 50000 * 0.00055 = 27.50
+        assert abs(fill.fee - 50000.0 * 0.00055) < 0.01
+
+    def test_dynamic_slippage(self):
+        from src.core.enums import OrderType, Side
+        from src.core.models import Order
+
+        broker = BacktestBroker(
+            commission=0.001, slippage=0.0,
+            slippage_base=0.0003, slippage_impact=0.0002,
+        )
+        # Small order
+        order = Order(
+            symbol="BTC/USDT", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=0.01,
+        )
+        fill_small = broker.submit_order(order, current_price=50000.0, timestamp=1)
+
+        # Large order ($200k notional)
+        broker2 = BacktestBroker(
+            commission=0.001, slippage=0.0,
+            slippage_base=0.0003, slippage_impact=0.0002,
+        )
+        order_large = Order(
+            symbol="BTC/USDT", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=4.0,
+        )
+        fill_large = broker2.submit_order(order_large, current_price=50000.0, timestamp=2)
+
+        # Large order should have higher slippage
+        slip_small = fill_small.price - 50000.0
+        slip_large = fill_large.price - 50000.0
+        assert slip_large > slip_small
+
+    def test_legacy_backward_compat(self):
+        """Without taker/maker, should use legacy commission/slippage."""
+        from src.core.enums import OrderType, Side
+        from src.core.models import Order
+
+        broker = BacktestBroker(commission=0.001, slippage=0.0005)
+        order = Order(
+            symbol="BTC/USDT", side=Side.BUY,
+            order_type=OrderType.MARKET, quantity=1.0,
+        )
+        fill = broker.submit_order(order, current_price=50000.0, timestamp=1)
+        # Legacy fee: notional * 0.001
+        expected_fee = fill.price * 0.001
+        assert abs(fill.fee - expected_fee) < 0.01
+        # Legacy slippage: price * (1 + 0.0005)
+        assert abs(fill.price - 50000.0 * 1.0005) < 0.01

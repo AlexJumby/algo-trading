@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from src.core.enums import OrderType, Side
 from src.core.models import Fill, Order
@@ -15,12 +15,56 @@ logger = get_logger("backtest_broker")
 
 
 class BacktestBroker(Broker):
-    """Simulates order execution for backtesting with commission and slippage."""
+    """Simulates order execution for backtesting.
 
-    def __init__(self, commission: float = 0.001, slippage: float = 0.0005):
-        self.commission = commission
-        self.slippage = slippage
+    Supports two fee modes:
+        1. **Legacy** (backward compat):  flat commission + flat slippage %
+        2. **Realistic**: maker/taker fee split + dynamic slippage (base + impact)
+    """
+
+    def __init__(
+        self,
+        commission: float = 0.001,
+        slippage: float = 0.0005,
+        *,
+        taker_fee: Optional[float] = None,
+        maker_fee: Optional[float] = None,
+        slippage_base: Optional[float] = None,
+        slippage_impact: Optional[float] = None,
+    ):
+        # Legacy flat model
+        self._legacy_commission = commission
+        self._legacy_slippage = slippage
+
+        # Realistic model (None → fallback to legacy)
+        self._taker_fee = taker_fee
+        self._maker_fee = maker_fee
+        self._slippage_base = slippage_base
+        self._slippage_impact = slippage_impact
+
         self._order_counter = 0
+
+    # ── Helpers ─────────────────────────────────────────────
+
+    def _compute_slippage_pct(self, notional: float) -> float:
+        """Dynamic slippage: base + impact * (notional / $100k).
+
+        Falls back to flat legacy slippage if realistic params not set.
+        """
+        if self._slippage_base is not None:
+            base = self._slippage_base
+            impact = self._slippage_impact or 0.0
+            return base + impact * (notional / 100_000)
+        return self._legacy_slippage
+
+    def _compute_fee(self, notional: float, is_taker: bool = True) -> float:
+        """Compute trading fee. Market orders are taker by default."""
+        if self._taker_fee is not None:
+            rate = self._taker_fee if is_taker else (self._maker_fee or 0.0)
+            return notional * rate
+        return notional * self._legacy_commission
+
+    # ── Order execution ────────────────────────────────────
 
     def submit_order(self, order: Order, **kwargs) -> Fill | None:
         current_price = kwargs.get("current_price", order.price)
@@ -29,13 +73,18 @@ class BacktestBroker(Broker):
         if current_price is None or current_price <= 0:
             return None
 
+        # Notional before slippage (for dynamic slippage calculation)
+        raw_notional = order.quantity * current_price
+        slip_pct = self._compute_slippage_pct(raw_notional)
+
         fill_price = current_price
         if order.side == Side.BUY:
-            fill_price *= 1 + self.slippage
+            fill_price *= 1 + slip_pct
         else:
-            fill_price *= 1 - self.slippage
+            fill_price *= 1 - slip_pct
 
-        fee = order.quantity * fill_price * self.commission
+        notional = order.quantity * fill_price
+        fee = self._compute_fee(notional, is_taker=True)
         self._order_counter += 1
 
         fill = Fill(

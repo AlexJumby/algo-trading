@@ -9,8 +9,9 @@ if TYPE_CHECKING:
 
 
 class PerformanceMetrics:
-    def __init__(self, tracker: PortfolioTracker):
+    def __init__(self, tracker: PortfolioTracker, bars_per_year: float = 8760):
         self.tracker = tracker
+        self._bars_per_year = bars_per_year
 
     def compute_all(self) -> dict:
         return {
@@ -78,8 +79,12 @@ class PerformanceMetrics:
             return float("inf") if gross_profit > 0 else 0.0
         return gross_profit / gross_loss
 
-    def sharpe_ratio(self, risk_free_rate: float = 0.0, periods: int = 8760) -> float:
-        """Annualized Sharpe ratio. Default periods=8760 (hourly bars, hours/year)."""
+    def sharpe_ratio(self, risk_free_rate: float = 0.0, periods: int | None = None) -> float:
+        """Annualized Sharpe ratio.
+
+        Uses self._bars_per_year unless explicit `periods` is passed.
+        """
+        periods = periods if periods is not None else int(self._bars_per_year)
         returns = self._equity_returns()
         if len(returns) < 2:
             return 0.0
@@ -89,8 +94,12 @@ class PerformanceMetrics:
             return 0.0
         return float(np.sqrt(periods) * np.mean(excess) / std)
 
-    def sortino_ratio(self, risk_free_rate: float = 0.0, periods: int = 8760) -> float:
-        """Annualized Sortino ratio. Default periods=8760 (hourly bars)."""
+    def sortino_ratio(self, risk_free_rate: float = 0.0, periods: int | None = None) -> float:
+        """Annualized Sortino ratio.
+
+        Uses self._bars_per_year unless explicit `periods` is passed.
+        """
+        periods = periods if periods is not None else int(self._bars_per_year)
         returns = self._equity_returns()
         if len(returns) < 2:
             return 0.0

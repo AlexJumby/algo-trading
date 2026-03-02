@@ -164,6 +164,24 @@ class BybitClient(ExchangeClient):
             # Some exchanges throw if leverage is already set
             logger.warning(f"Set leverage warning for {symbol}: {e}")
 
+    def fetch_funding_rate(self, symbol: str) -> dict:
+        """Fetch the current funding rate for a perpetual contract.
+
+        Returns:
+            dict with keys: symbol, funding_rate, funding_timestamp
+        """
+        try:
+            result = self.exchange.fetch_funding_rate(symbol)
+            return {
+                "symbol": symbol,
+                "funding_rate": float(result.get("fundingRate", 0)),
+                "funding_timestamp": result.get("fundingTimestamp", 0),
+            }
+        except ccxt.BaseError as e:
+            raise ExchangeError(
+                f"Failed to fetch funding rate for {symbol}: {e}"
+            ) from e
+
     def update_trading_stop(self, symbol: str, stop_loss: float) -> None:
         """Update stop-loss on an existing position (for trailing stop)."""
         try:

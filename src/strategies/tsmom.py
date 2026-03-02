@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.core.config import StrategyConfig
+from src.core.config import StrategyConfig, bars_per_year, hours_to_bars
 from src.core.enums import SignalAction
 from src.core.models import Fill, Signal
 from src.indicators.adx import ADXIndicator
@@ -41,10 +41,17 @@ class TSMOMStrategy(BaseStrategy):
     def setup(self, config: StrategyConfig) -> None:
         p = config.params
 
-        # --- Momentum lookback periods (in hours) ---
-        self.roc_short = p.get("roc_short", 24)       # 1 day
-        self.roc_medium = p.get("roc_medium", 168)     # 7 days
-        self.roc_long = p.get("roc_long", 720)         # 30 days
+        # --- Timeframe (injected by run_backtest / run_live) ---
+        tf = p.get("timeframe", "1h")
+        self._timeframe = tf
+        self._bars_per_year = bars_per_year(tf)
+
+        # --- Momentum lookback periods (config values are in HOURS) ---
+        # Convert hours → bar counts for the active timeframe.
+        # On 1h these produce identical values to the old code.
+        self.roc_short = hours_to_bars(p.get("roc_short", 24), tf)     # 1 day
+        self.roc_medium = hours_to_bars(p.get("roc_medium", 168), tf)  # 7 days
+        self.roc_long = hours_to_bars(p.get("roc_long", 720), tf)      # 30 days
 
         # --- Momentum weights ---
         self.w_short = p.get("w_short", 0.20)
@@ -55,27 +62,30 @@ class TSMOMStrategy(BaseStrategy):
         self.entry_threshold = p.get("entry_threshold", 0.01)  # 1%
 
         # --- Volatility targeting ---
-        self.vol_lookback = p.get("vol_lookback", 168)     # 7 days
+        self.vol_lookback = hours_to_bars(p.get("vol_lookback", 168), tf)  # 7 days
         self.target_vol = p.get("target_vol", 0.40)        # 40% annualized target
         self.max_vol_scalar = p.get("max_vol_scalar", 3.0)  # Max position scale
         self.min_vol_scalar = p.get("min_vol_scalar", 0.2)  # Min position scale
 
-        # --- ADX trend filter ---
+        # --- ADX trend filter (already in bars — do NOT convert) ---
         self.adx_period = p.get("adx_period", 14)
         self.adx_threshold = p.get("adx_threshold", 20)
 
-        # --- Trend EMA (directional filter) ---
-        self.trend_ema_period = p.get("trend_ema", 200)
+        # --- Trend EMA (hours → bars) ---
+        self.trend_ema_period = hours_to_bars(p.get("trend_ema", 200), tf)
 
-        # --- ATR for stop-loss ---
+        # --- ATR for stop-loss (already in bars — do NOT convert) ---
         self.atr_period = p.get("atr_period", 14)
         self.atr_sl_mult = p.get("atr_sl_mult", 2.0)
 
-        # --- Cooldown after position close ---
+        # --- Cooldown after position close (already in bars) ---
         self.cooldown_bars = p.get("cooldown_bars", 12)
 
         # --- Max holding period (bars) — 0 = disabled ---
         self.max_hold_bars = p.get("max_hold_bars", 0)
+
+        # --- Volatility mode ---
+        self.vol_mode = p.get("vol_mode", "simple")
 
         # --- Internal state ---
         self._bars_since_fill = 999
@@ -87,7 +97,11 @@ class TSMOMStrategy(BaseStrategy):
             ROCIndicator(self.roc_short),
             ROCIndicator(self.roc_medium),
             ROCIndicator(self.roc_long),
-            RealizedVolatility(self.vol_lookback),
+            RealizedVolatility(
+                self.vol_lookback,
+                annualization_factor=self._bars_per_year,
+                mode=self.vol_mode,
+            ),
             ADXIndicator(self.adx_period),
             ATRIndicator(self.atr_period),
             EMAIndicator(self.trend_ema_period),
@@ -230,14 +244,13 @@ class TSMOMStrategy(BaseStrategy):
             )
 
             if long_conditions:
-                # Strength = vol_scalar (capped at 1.0 for position sizer)
-                strength = min(vol_scalar, 1.0)
-
+                # vol_scalar passed via metadata so PositionSizer can
+                # scale UP or DOWN (Signal.strength is capped at 1.0).
                 signals.append(Signal(
                     timestamp=int(curr["timestamp"]),
                     symbol="",
                     action=SignalAction.LONG,
-                    strength=strength,
+                    strength=1.0,
                     metadata={
                         "atr": atr,
                         "atr_sl": atr * self.atr_sl_mult,
@@ -251,13 +264,11 @@ class TSMOMStrategy(BaseStrategy):
                 ))
 
             elif short_conditions:
-                strength = min(vol_scalar, 1.0)
-
                 signals.append(Signal(
                     timestamp=int(curr["timestamp"]),
                     symbol="",
                     action=SignalAction.SHORT,
-                    strength=strength,
+                    strength=1.0,
                     metadata={
                         "atr": atr,
                         "atr_sl": atr * self.atr_sl_mult,

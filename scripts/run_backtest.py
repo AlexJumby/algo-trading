@@ -12,7 +12,7 @@ from pathlib import Path
 # Add project root to sys.path so `src` is importable from any cwd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.core.config import AppConfig
+from src.core.config import AppConfig, bars_per_year
 from src.data.feed import HistoricalDataFeed
 from src.data.historical import HistoricalDataManager
 from src.engine.backtest_engine import BacktestEngine
@@ -42,6 +42,9 @@ def main():
     symbol = args.symbol or config.pairs[0].symbol
     timeframe = config.pairs[0].timeframe
 
+    # Inject timeframe into strategy params so TSMOM can normalize lookbacks
+    config.strategy.params.setdefault("timeframe", timeframe)
+
     # Load historical data
     if args.data:
         data_path = args.data
@@ -62,9 +65,14 @@ def main():
 
     # Wire up components
     data_feed = HistoricalDataFeed(df)
+    bt = config.backtest
     broker = BacktestBroker(
-        commission=config.backtest.commission_pct,
-        slippage=config.backtest.slippage_pct,
+        commission=bt.commission_pct,
+        slippage=bt.slippage_pct,
+        taker_fee=bt.taker_fee_pct,
+        maker_fee=bt.maker_fee_pct,
+        slippage_base=bt.slippage_base_pct,
+        slippage_impact=bt.slippage_impact_pct,
     )
     portfolio = PortfolioTracker(config.backtest.initial_capital)
 

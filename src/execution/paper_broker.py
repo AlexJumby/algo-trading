@@ -18,9 +18,15 @@ logger = get_logger("paper_broker")
 class PaperBroker(Broker):
     """Simulates order fills using live market data but without placing real orders."""
 
-    def __init__(self, exchange_client: ExchangeClient, slippage: float = 0.0005):
+    def __init__(
+        self,
+        exchange_client: ExchangeClient,
+        slippage: float = 0.0005,
+        taker_fee: float = 0.001,
+    ):
         self.client = exchange_client
         self.slippage = slippage
+        self.taker_fee = taker_fee
         self._order_counter = 0
 
     def submit_order(self, order: Order, **kwargs) -> Fill | None:
@@ -37,7 +43,7 @@ class PaperBroker(Broker):
         else:
             fill_price *= 1 - self.slippage
 
-        fee = order.quantity * fill_price * 0.001  # Simulated 0.1% fee
+        fee = order.quantity * fill_price * self.taker_fee
         self._order_counter += 1
 
         fill = Fill(
@@ -89,7 +95,7 @@ class PaperBroker(Broker):
                 exit_price = pos.stop_loss if hit_sl else pos.take_profit
 
                 self._order_counter += 1
-                fee = pos.quantity * exit_price * 0.001
+                fee = pos.quantity * exit_price * self.taker_fee
                 fill = Fill(
                     order_id=f"paper_stop_{self._order_counter}",
                     symbol=symbol,

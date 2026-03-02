@@ -45,6 +45,9 @@ def main():
     config = AppConfig.from_yaml(args.config)
     setup_logging(log_level=config.log_level)
 
+    # Inject timeframe into strategy params so TSMOM can normalize lookbacks
+    config.strategy.params.setdefault("timeframe", config.pairs[0].timeframe)
+
     # Safety check
     if args.mode == "live" and not config.exchange.testnet:
         logger.warning("=" * 60)
