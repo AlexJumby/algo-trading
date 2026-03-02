@@ -342,7 +342,7 @@ class LiveEngine:
         if pos.stop_loss != old_sl:
             logger.info(
                 f"Trailing stop updated {symbol}: "
-                f"{old_sl:.2f if old_sl else 'None'} -> {pos.stop_loss:.2f}"
+                f"{f'${old_sl:,.2f}' if old_sl else 'None'} -> ${pos.stop_loss:,.2f}"
             )
             # Telegram: trailing stop moved (only log significant moves)
             if self.notifier:
