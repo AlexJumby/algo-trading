@@ -11,3 +11,14 @@ pythonpath = ["."]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E402",   # module-level import not at top (scripts need logging.disable before imports)
+    "F841",   # unused variable (intermediate results in scripts)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]         # unused/redefined imports OK in tests
+"scripts/*" = ["F401", "E501"]       # scripts are one-off utilities, relaxed rules

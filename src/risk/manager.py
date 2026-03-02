@@ -66,7 +66,10 @@ class RiskManager:
         sl_price = self._compute_stop_loss(signal.action, current_price, signal.metadata)
         # TP is optional — breakout strategies use trailing stop instead
         no_tp = signal.metadata.get("no_tp", False) if signal.metadata else False
-        tp_price = None if no_tp else self._compute_take_profit(signal.action, current_price, signal.metadata)
+        tp_price = (
+            None if no_tp
+            else self._compute_take_profit(signal.action, current_price, signal.metadata)
+        )
 
         side = Side.BUY if signal.action == SignalAction.LONG else Side.SELL
 
@@ -99,7 +102,9 @@ class RiskManager:
             quantity=pos.quantity,
         )
 
-    def _compute_stop_loss(self, action: SignalAction, price: float, metadata: dict = None) -> float:
+    def _compute_stop_loss(
+        self, action: SignalAction, price: float, metadata: dict = None,
+    ) -> float:
         # ATR-based SL if provided by strategy
         if metadata and "atr_sl" in metadata:
             atr_sl = metadata["atr_sl"]
@@ -116,7 +121,9 @@ class RiskManager:
             return price * (1 + pct)
         return price
 
-    def _compute_take_profit(self, action: SignalAction, price: float, metadata: dict = None) -> float:
+    def _compute_take_profit(
+        self, action: SignalAction, price: float, metadata: dict = None,
+    ) -> float:
         # ATR-based TP if provided by strategy
         if metadata and "atr_tp" in metadata:
             atr_tp = metadata["atr_tp"]

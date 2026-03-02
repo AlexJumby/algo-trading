@@ -22,7 +22,6 @@ Why this beats EMA crossover:
 """
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from src.core.config import StrategyConfig

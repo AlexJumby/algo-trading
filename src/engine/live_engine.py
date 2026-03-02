@@ -221,7 +221,8 @@ class LiveEngine:
                             self.notifier.notify_trade_close(
                                 symbol, closed_pos.side.value, closed_pos.quantity,
                                 closed_pos.entry_price, fill.price,
-                                self.portfolio.closed_trades[-1]["pnl"] if self.portfolio.closed_trades else 0,
+                                (self.portfolio.closed_trades[-1]["pnl"]
+                                 if self.portfolio.closed_trades else 0),
                                 "SL", self.portfolio.equity,
                                 self.portfolio.current_drawdown_pct,
                             )
@@ -314,7 +315,8 @@ class LiveEngine:
                         self.notifier.notify_trade_close(
                             symbol, closed_pos.side.value, closed_pos.quantity,
                             closed_pos.entry_price, fill.price,
-                            self.portfolio.closed_trades[-1]["pnl"] if self.portfolio.closed_trades else 0,
+                            (self.portfolio.closed_trades[-1]["pnl"]
+                             if self.portfolio.closed_trades else 0),
                             "SL (mid-candle)", self.portfolio.equity,
                             self.portfolio.current_drawdown_pct,
                         )

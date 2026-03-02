@@ -104,7 +104,10 @@ class TestBacktestEngine:
             "volume": [100.0] * 200,
         })
 
-        from src.core.config import AppConfig, ExchangeConfig, BacktestConfig, StrategyConfig, TradingPairConfig
+        from src.core.config import (
+            AppConfig, ExchangeConfig, BacktestConfig,
+            StrategyConfig, TradingPairConfig,
+        )
         from src.core.enums import MarketType
 
         config = AppConfig(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from src.core.enums import OrderType, Side
+from src.core.enums import Side
 from src.core.models import Fill, Order
 from src.exchange.base import ExchangeClient
 from src.execution.broker import Broker
