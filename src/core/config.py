@@ -67,6 +67,7 @@ class RiskConfig(BaseModel):
     default_take_profit_pct: float = 0.04
     position_sizing_method: str = "fixed_fraction"
     max_leverage_exposure: float = 5.0  # max notional/equity per position
+    drawdown_soft_pct: float = 0.10  # start gradual deleveraging at this DD
 
 
 class BacktestConfig(BaseModel):

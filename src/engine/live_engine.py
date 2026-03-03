@@ -13,7 +13,9 @@ from src.data.feed import CcxtDataFeed
 from src.execution.broker import Broker
 from src.execution.paper_broker import PaperBroker
 from src.exchange.bybit_client import BybitClient
+from src.core.config import bars_per_year as _bars_per_year
 from src.notifications.telegram import TelegramNotifier
+from src.portfolio.rolling_metrics import RollingMetrics
 from src.portfolio.tracker import PortfolioTracker
 from src.risk.manager import RiskManager
 from src.strategies.base import BaseStrategy
@@ -69,6 +71,16 @@ class LiveEngine:
         # Periodic status timer
         self._last_status_time = 0.0
 
+        # Rolling performance monitors
+        tf = config.strategy.params.get("timeframe", config.pairs[0].timeframe)
+        bpy = _bars_per_year(tf)
+        self._rolling_metrics = RollingMetrics(
+            window_bars=720,  # ~30 days at 1h
+            bars_per_year=bpy,
+            sharpe_alert_threshold=0.0,
+        )
+        self._last_rolling: dict = {}
+
     def run(self) -> None:
         self._running = True
         signal.signal(signal.SIGINT, self._shutdown)
@@ -120,6 +132,7 @@ class LiveEngine:
                         self.portfolio.current_drawdown_pct,
                         self.portfolio.open_positions,
                         len(self.portfolio.closed_trades),
+                        rolling_metrics=self._last_rolling,
                     )
                     self._last_status_time = time.time()
 
@@ -283,6 +296,15 @@ class LiveEngine:
 
                 # Take snapshot
                 self.portfolio.take_snapshot(now_ms)
+
+                # Rolling metrics (after enough data)
+                if len(self.portfolio.equity_curve) >= 48:
+                    self._last_rolling = self._rolling_metrics.compute(
+                        self.portfolio.equity_curve,
+                        self.portfolio.closed_trades,
+                    )
+                    if self._last_rolling.get("degradation_alert") and self.notifier:
+                        self.notifier.notify_degradation(self._last_rolling)
 
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}", exc_info=True)

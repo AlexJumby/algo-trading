@@ -10,14 +10,16 @@ class PositionSizer:
 
     def compute_size(
         self, equity: float, price: float, signal: Signal, leverage: int = 1,
+        drawdown_pct: float = 0.0,
     ) -> float:
         method = self.config.position_sizing_method
         if method == "fixed_fraction":
-            return self._fixed_fraction(equity, price, signal, leverage)
-        return self._fixed_fraction(equity, price, signal, leverage)
+            return self._fixed_fraction(equity, price, signal, leverage, drawdown_pct)
+        return self._fixed_fraction(equity, price, signal, leverage, drawdown_pct)
 
     def _fixed_fraction(
         self, equity: float, price: float, signal: Signal, leverage: int = 1,
+        drawdown_pct: float = 0.0,
     ) -> float:
         """Risk a fixed percentage of equity per trade.
 
@@ -28,6 +30,9 @@ class PositionSizer:
         vol_scalar (from strategy metadata) can scale the position UP or DOWN
         based on volatility targeting.  A hard cap (max_leverage_exposure)
         prevents unreasonably large positions.
+
+        Drawdown-based deleveraging linearly reduces position size from 1.0
+        at soft threshold to 0.0 at hard threshold (max_drawdown_pct).
         """
         margin = equity * self.config.max_position_size_pct
         if price <= 0:
@@ -43,6 +48,13 @@ class PositionSizer:
         if signal.metadata:
             vol_scalar = signal.metadata.get("vol_scalar", 1.0)
         quantity *= vol_scalar
+
+        # Drawdown-based deleveraging: linear scale 1.0 → 0.0
+        soft = getattr(self.config, "drawdown_soft_pct", 0)
+        hard = getattr(self.config, "max_drawdown_pct", 0)
+        if soft > 0 and hard > soft and drawdown_pct > soft:
+            dd_scalar = max(0.0, 1.0 - (drawdown_pct - soft) / (hard - soft))
+            quantity *= dd_scalar
 
         # Hard cap: max notional / equity ratio
         max_lev = getattr(self.config, "max_leverage_exposure", 0)

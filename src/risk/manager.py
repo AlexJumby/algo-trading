@@ -58,6 +58,7 @@ class RiskManager:
             price=current_price,
             signal=signal,
             leverage=self.leverage,
+            drawdown_pct=self.portfolio.current_drawdown_pct,
         )
         if quantity <= 0:
             return None

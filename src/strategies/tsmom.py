@@ -31,6 +31,7 @@ from src.indicators.adx import ADXIndicator
 from src.indicators.atr import ATRIndicator
 from src.indicators.ema import EMAIndicator
 from src.indicators.realized_vol import RealizedVolatility
+from src.indicators.regime import RegimeFilter
 from src.indicators.roc import ROCIndicator
 from src.strategies.base import BaseStrategy
 
@@ -87,6 +88,11 @@ class TSMOMStrategy(BaseStrategy):
         # --- Volatility mode ---
         self.vol_mode = p.get("vol_mode", "simple")
 
+        # --- Regime filter ---
+        self.regime_enabled = p.get("regime_enabled", True)
+        self.regime_period = p.get("regime_period", self.adx_period)
+        self.regime_threshold = p.get("regime_threshold", 0.4)
+
         # --- Internal state ---
         self._bars_since_fill = 999
         self._bars_in_position = 0
@@ -106,6 +112,14 @@ class TSMOMStrategy(BaseStrategy):
             ATRIndicator(self.atr_period),
             EMAIndicator(self.trend_ema_period),
         ]
+        if self.regime_enabled:
+            self.indicators.append(
+                RegimeFilter(
+                    period=self.regime_period,
+                    vol_period=self.vol_lookback,
+                    threshold=self.regime_threshold,
+                )
+            )
 
     def on_fill(self, fill: Fill) -> None:
         self._bars_since_fill = 0
@@ -184,6 +198,15 @@ class TSMOMStrategy(BaseStrategy):
         else:
             vol_scalar = 1.0
 
+        # --- Regime filter ---
+        regime_state = None
+        regime_score = None
+        if self.regime_enabled:
+            regime_col = f"regime_state_{self.regime_period}"
+            regime_score_col = f"regime_{self.regime_period}"
+            regime_state = str(curr.get(regime_col, "trending"))
+            regime_score = float(curr.get(regime_score_col, 0.5))
+
         # --- Filters ---
         trending = adx > self.adx_threshold
         in_cooldown = self._bars_since_fill < self.cooldown_bars
@@ -224,6 +247,10 @@ class TSMOMStrategy(BaseStrategy):
                 return signals
 
         # --- ENTRY SIGNALS ---
+        # Regime filter: skip entries in choppy markets
+        if self.regime_enabled and regime_state == "choppy":
+            return signals  # Only exits above, no new entries
+
         if not self._in_position and not in_cooldown:
             # --- LONG entry ---
             long_conditions = (
@@ -260,6 +287,9 @@ class TSMOMStrategy(BaseStrategy):
                         "vol_scalar": round(vol_scalar, 2),
                         "realized_vol": round(realized_vol, 4),
                         "adx": round(adx, 1),
+                        "regime_score": (
+                            round(regime_score, 2) if regime_score is not None else None
+                        ),
                     },
                 ))
 
@@ -278,6 +308,9 @@ class TSMOMStrategy(BaseStrategy):
                         "vol_scalar": round(vol_scalar, 2),
                         "realized_vol": round(realized_vol, 4),
                         "adx": round(adx, 1),
+                        "regime_score": (
+                            round(regime_score, 2) if regime_score is not None else None
+                        ),
                     },
                 ))
 

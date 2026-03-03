@@ -123,6 +123,7 @@ class TelegramNotifier:
     def notify_status(
         self, equity: float, cash: float, drawdown: float,
         open_positions: dict, closed_count: int,
+        rolling_metrics: dict | None = None,
     ) -> None:
         lines = [
             f"<b>Status Report</b> ({_now()})",
@@ -138,7 +139,26 @@ class TelegramNotifier:
                 f"  <code>{sym}</code>: {pos.side.value} "
                 f"pnl=<code>${pos.unrealized_pnl:,.2f}</code>{sl_str}"
             )
+        # Rolling performance metrics
+        if rolling_metrics and rolling_metrics.get("rolling_sharpe", 0) != 0:
+            rm = rolling_metrics
+            lines.append("")
+            lines.append(
+                f"\U0001f4ca 30d Sharpe: <code>{rm['rolling_sharpe']:.2f}</code> | "
+                f"WR: <code>{rm['rolling_win_rate']:.0%}</code> | "
+                f"Exp: <code>${rm['rolling_expectancy']:.2f}</code>"
+            )
         self.send("\n".join(lines))
+
+    def notify_degradation(self, metrics: dict) -> None:
+        msg = (
+            "<b>\u26a0\ufe0f Performance Degradation</b>\n"
+            f"30d Sharpe: <code>{metrics['rolling_sharpe']:.2f}</code>\n"
+            f"Expectancy: <code>${metrics['rolling_expectancy']:.2f}</code>\n"
+            f"Win Rate: <code>{metrics['rolling_win_rate']:.0%}</code>\n"
+            f"Profit Factor: <code>{metrics['rolling_pf']:.2f}</code>"
+        )
+        self.send(msg)
 
     def notify_error(self, error_msg: str) -> None:
         safe_msg = error_msg[:500].replace("<", "&lt;").replace(">", "&gt;")
