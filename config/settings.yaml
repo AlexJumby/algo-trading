@@ -53,6 +53,10 @@ strategy:
     cooldown_bars: 24             # 1 day cooldown
     # Lookback window for indicators
     lookback_bars: 1640
+    # Regime filter — skip entries in choppy markets
+    regime_enabled: true
+    regime_period: 14
+    regime_threshold: 0.4
 
 risk:
   max_position_size_pct: 0.15    # 15% of equity per trade (leveraged: 15% * 7x = 105% notional)
@@ -62,6 +66,7 @@ risk:
   default_take_profit_pct: 0.06
   position_sizing_method: "fixed_fraction"
   max_leverage_exposure: 5.0     # Hard cap: max notional/equity per position
+  drawdown_soft_pct: 0.10        # Start gradual deleveraging at 10% DD
 
 backtest:
   start_date: "2024-03-01"
