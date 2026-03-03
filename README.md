@@ -1,133 +1,212 @@
-# Algo Trading Bot for Bybit
+# Algo Trading System v0.3.0
 
-Algorithmic trading bot for Bybit exchange (Spot + USDT Perpetual Futures).
+Quantitative trading system for crypto perpetual futures (Bybit). Designed with fund-level architecture: signal layer, risk layer, execution layer, portfolio layer, infrastructure layer.
 
-**Active strategy: TSMOM** (Time-Series Momentum + Volatility Management) — an academic approach used by hedge funds like AQR and Man Group.
+**Active strategy:** TSMOM (Time-Series Momentum + Volatility Management) — based on Moskowitz, Ooi, Pedersen (2012), used by AQR Capital and Man Group.
+
+**Status:** Paper trading on Bybit testnet. 148 tests, Docker + CI/CD.
 
 ---
 
-## Backtest Results (730 days, March 2024 - March 2026)
+## Backtest Results (730 days, Mar 2024 - Mar 2026)
 
-| Metric | BTC/USDT (7x) | ETH/USDT (5x) |
+| Metric | BTC/USDT (7x) | ETH/USDT (7x) |
 |--------|:-:|:-:|
 | **Total Return** | **+70.9%** | **+141.5%** |
-| **Annual Return** | ~35%/yr | ~71%/yr |
 | **Sharpe Ratio** | 1.09 | 1.85 |
-| **Sortino Ratio** | 1.02 | 1.84 |
 | **Max Drawdown** | 23.0% | 18.3% |
 | **Win Rate** | 38% | 40% |
 | **Profit Factor** | 1.56 | 2.01 |
 | **Trades** | 120 | 124 |
-| **Avg Trade PnL** | $59 | $114 |
 
-### Validation Summary
+With realistic fees (maker 0.02%, taker 0.055%, dynamic slippage, 0.01%/8h funding).
 
-| Test | Result |
-|------|--------|
-| Corrected Sharpe | 1.09 (>0.5 institutional grade) |
-| Walk-Forward (70/30) | Test +38% > Train +28%, no overfitting |
-| Bear market | +47% when BTC was -21% |
-| Long + Short | Both profitable (65%/35%) |
-| Monte Carlo (10k sims) | 92.5% probability of profit |
-| ETH Out-of-Sample | +141% with same params |
+---
+
+## Architecture
+
+```
+Signal Layer        Risk Layer           Execution Layer      Portfolio Layer
+┌─────────────┐    ┌──────────────┐     ┌──────────────┐    ┌──────────────┐
+│ TSMOM        │    │ Vol Targeting │     │ Market Orders│    │ PnL Tracking │
+│ Regime Filter│───>│ DD Deleverage│────>│ Trailing Stop│───>│ Rolling      │
+│ Multi-ROC    │    │ Position Cap │     │ Paper/Live   │    │   Metrics    │
+└─────────────┘    └──────────────┘     └──────────────┘    └──────────────┘
+                                                                    │
+Infrastructure Layer                                                v
+┌──────────────────────────────────────────────────────────────────────┐
+│ Docker + VPS │ Telegram Alerts │ Web Dashboard │ SQLite │ CI/CD     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Signal Flow
+
+1. **Fetch candles** (OHLCV) from Bybit via ccxt
+2. **Compute indicators** — ROC, EWMA Vol, ADX, ATR, EMA, Regime Filter
+3. **Check regime** — "trending" = proceed, "choppy" = skip entry
+4. **Generate signals** — LONG/SHORT/CLOSE based on composite momentum score
+5. **Risk check** — vol-scaled sizing, drawdown deleveraging, leverage cap
+6. **Execute** — market order with ATR stop-loss
+7. **Monitor** — rolling Sharpe, expectancy, degradation alerts
+
+---
+
+## Key Features
+
+### Signal Layer
+- **Multi-period momentum** — 48h / 336h / 1440h ROC with weighted composite score
+- **Regime filter** — ADX + efficiency ratio + vol z-score classifier; blocks entries in choppy markets
+- **EWMA volatility** — exponentially weighted vol reacts faster to regime shifts than rolling std
+- **Timeframe-agnostic** — params in hours, auto-converted to bar counts for any timeframe (1h, 4h, 1d)
+
+### Risk Layer
+- **Volatility targeting** — scales position size to 50% annualized vol target
+- **Drawdown deleveraging** — linear position reduction from 10% DD (full size) to 25% DD (zero)
+- **ATR trailing stop** — 3.5x ATR, moves with price, no fixed TP
+- **Max leverage cap** — 5x notional/equity hard limit per position
+- **Max drawdown halt** — full stop at 25%
+
+### Execution Layer
+- **Bybit perpetuals** — USDT-margined futures via ccxt
+- **Paper + live modes** — paper broker with realistic maker/taker fees
+- **Dynamic slippage** — base + impact per $100k notional
+- **Funding rate** — 0.01%/8h perpetual funding in backtest
+
+### Portfolio Layer
+- **Rolling metrics** — 30-day Sharpe, Sortino, expectancy, win rate, profit factor
+- **Degradation alerts** — Telegram alert when rolling Sharpe crosses below 0
+- **Equity curve persistence** — SQLite snapshots every bar
+- **Performance metrics** — Sharpe, Sortino, max DD, profit factor, best/worst trade
+
+### Infrastructure
+- **Docker deployment** — single `docker compose up -d`
+- **Telegram notifications** — trade open/close, trailing stop, 4h status, degradation alerts
+- **Web dashboard** — real-time equity curve, positions, trades (FastAPI + HTMX)
+- **CI/CD** — GitHub Actions: test on push, auto-deploy to VPS
+- **148 tests** — strategies, indicators, risk, portfolio, regime filter, deleveraging, rolling metrics
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# Install
 pip install -r requirements.txt
 
-# 2. Copy config
-cp config/settings.example.yaml config/settings.yaml
-
-# 3. Fetch historical data (mainnet, no keys needed)
+# Fetch data
 python scripts/fetch_historical.py --symbol "BTC/USDT:USDT" --days 730
 
-# 4. Run backtest
+# Backtest
 python scripts/run_backtest.py
 
-# 5. Validate strategy
-python scripts/validate_strategy.py
+# Parameter sensitivity analysis
+python -m scripts.param_sensitivity
 
-# 6. Run paper trading (testnet, no real money)
+# Paper trading (testnet)
+export BYBIT_API_KEY=your_testnet_key
+export BYBIT_API_SECRET=your_testnet_secret
 python scripts/run_live.py --mode paper
 ```
 
 ---
 
-## How It Works
+## TSMOM Strategy
 
-### Architecture
-
-The bot runs a simple loop every hour (or other timeframe):
-
-1. **Fetch candles** (OHLCV) from exchange
-2. **Compute indicators** — ROC, Realized Vol, ADX, ATR, EMA
-3. **Generate signals** — LONG, SHORT or CLOSE based on momentum score
-4. **Check risks** — position sizing with vol targeting, drawdown limits
-5. **Place order** — on exchange (live) or virtually (paper/backtest)
-6. **Track PnL** — equity curve, drawdown, trade log
-
-```
-Bybit API  ->  Indicators  ->  Strategy   ->  Risk Manager  ->  Order  ->  Portfolio
-(candles)      (ROC/Vol/       (TSMOM:        (vol-scaled       (buy/     (PnL,
-                ADX/ATR)       momentum       position size,     sell)     equity)
-                               score)         trailing SL)
-```
-
-### TSMOM Strategy
-
-Based on academic research: Moskowitz, Ooi, Pedersen (2012) "Time Series Momentum".
-
-**Core idea**: Assets that have been going up tend to keep going up. Assets going down tend to keep going down. This is the most statistically robust trading signal across all asset classes.
-
-**Entry (LONG)**:
-- Composite momentum score > threshold (2%)
-  - 48h ROC (16% weight) + 336h ROC (24%) + 1440h ROC (60%) = weighted score
-- ADX > 22 (market is trending, not ranging)
-- Price above 400-period EMA (uptrend)
+### Entry (LONG)
+- Composite momentum > 2%: `0.16 * ROC_48h + 0.24 * ROC_336h + 0.60 * ROC_1440h`
+- Regime = "trending" (composite ADX + efficiency ratio + vol z-score > 0.4)
+- ADX > 22 (market is trending)
+- Price > 400-period EMA (uptrend confirmed)
 - +DI > -DI (bullish directional movement)
-- Short-term ROC positive (immediate momentum confirms)
+- Short-term ROC positive
 
-**Entry (SHORT)**: Mirror conditions for downtrend.
+### Entry (SHORT)
+Mirror conditions for downtrend.
 
-**Exit**:
+### Exit
 - Momentum reversal (composite score flips sign)
-- ATR trailing stop (3.5x ATR) — lets winners run
-- Max drawdown circuit breaker (25%)
+- ATR trailing stop (3.5x ATR)
+- Max holding period (if configured)
 
-**Volatility Targeting**:
-- Measures 14-day realized volatility
-- Scales position size: `vol_scalar = target_vol / realized_vol`
-- High vol -> smaller positions. Low vol -> bigger positions.
-- This is the key insight that makes professional trend-following work.
-
-### Risk Management
-
-- **Position size**: 15% of equity per trade (leveraged: 15% x 7 = 105% notional)
-- **Stop-Loss**: 3x ATR (wide, avoids noise)
-- **Trailing Stop**: 3.5x ATR (moves with price, locks in profits)
-- **No fixed TP**: Let winners run indefinitely
-- **Max positions**: 3 simultaneous
-- **Max drawdown**: 25% — trading halts
-- **Cooldown**: 24 bars (1 day) after any close
-- **Vol targeting**: 50% annualized target
+### Position Sizing
+```
+base_size    = equity * 15% * leverage
+vol_scalar   = target_vol / realized_vol  (clamped 0.2x - 3.0x)
+dd_scalar    = 1.0 - (drawdown - 10%) / (25% - 10%)  (linear 1.0→0.0)
+final_size   = base_size * vol_scalar * dd_scalar
+hard_cap     = equity * 5x max leverage
+```
 
 ---
 
-## Available Strategies
+## Configuration
 
-| Strategy | Name | Description |
-|----------|------|-------------|
-| **TSMOM** | `tsmom` | Time-Series Momentum + Vol Management. Active, best performer. |
-| Momentum V1 | `momentum` | EMA crossover + RSI + MACD. Simple baseline. |
-| Momentum V2 | `momentum_v2` | V1 + trend filter + ATR SL/TP + volume. |
-| Momentum V3 | `momentum_v3` | V1 + trailing stop + cooldown. |
-| Breakout | `breakout` | Donchian Channel breakout + ADX. Experimental. |
+`config/settings.yaml`:
 
-To switch strategy, change `strategy.name` in `config/settings.yaml`.
+```yaml
+pairs:
+  - symbol: "BTC/USDT:USDT"
+    market_type: futures
+    timeframe: "1h"
+    leverage: 7
+
+strategy:
+  name: tsmom
+  params:
+    vol_mode: "ewma"              # "simple" or "ewma"
+    roc_short: 48                  # Hours
+    roc_medium: 336
+    roc_long: 1440
+    w_short: 0.16
+    w_medium: 0.24
+    w_long: 0.60
+    entry_threshold: 0.02
+    vol_lookback: 336
+    target_vol: 0.50
+    adx_threshold: 22
+    trend_ema: 400
+    atr_sl_mult: 3.0
+    trailing_atr_mult: 3.5
+    cooldown_bars: 24
+    lookback_bars: 1640
+    # Regime filter
+    regime_enabled: true
+    regime_period: 14
+    regime_threshold: 0.4
+
+risk:
+  max_position_size_pct: 0.15
+  max_open_positions: 3
+  max_drawdown_pct: 0.25
+  max_leverage_exposure: 5.0
+  drawdown_soft_pct: 0.10         # Start deleveraging at 10% DD
+```
+
+### API Keys (env vars recommended)
+```bash
+export BYBIT_API_KEY=your_key
+export BYBIT_API_SECRET=your_secret
+export TELEGRAM_BOT_TOKEN=your_bot_token
+export TELEGRAM_CHAT_ID=your_chat_id
+```
+
+---
+
+## Deployment (Docker)
+
+```bash
+# On VPS
+git clone git@github.com:AlexJumby/algo-trading.git ~/algo_trading
+cd ~/algo_trading
+cp .env.example .env && nano .env     # API keys
+nano config/settings.yaml              # Trading config
+
+docker compose up -d                   # Start
+docker compose logs -f --tail=50       # View logs
+docker compose down                    # Stop
+```
+
+CI/CD: push to `main` → GitHub Actions runs tests → auto-deploys to VPS.
 
 ---
 
@@ -135,93 +214,12 @@ To switch strategy, change `strategy.name` in `config/settings.yaml`.
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/run_backtest.py` | Run backtest with current config |
+| `scripts/run_backtest.py` | Backtest with current config |
 | `scripts/run_live.py` | Live or paper trading |
-| `scripts/fetch_historical.py` | Download OHLCV data from Bybit |
-| `scripts/validate_strategy.py` | Full validation suite (7 tests) |
-| `scripts/optimize.py` | Grid optimizer for momentum strategies |
-| `scripts/optimize_tsmom_v2.py` | 2-stage optimizer for TSMOM |
-| `scripts/finetune_tsmom.py` | Quick leverage/position fine-tuning |
-| `scripts/test_tsmom.py` | Compare multiple TSMOM configs |
-
----
-
-## Configuration
-
-All settings in `config/settings.yaml`:
-
-### API Keys
-
-**Option 1: env variables (recommended)**
-```bash
-export BYBIT_API_KEY=your_key
-export BYBIT_API_SECRET=your_secret
-```
-
-**Option 2: directly in config** (DO NOT commit to git!)
-```yaml
-exchange:
-  api_key: "your_key"
-  api_secret: "your_secret"
-```
-
-### TSMOM Strategy Parameters
-
-```yaml
-strategy:
-  name: tsmom
-  params:
-    # Multi-period momentum lookback (hours)
-    roc_short: 48          # 2-day momentum
-    roc_medium: 336        # 14-day momentum
-    roc_long: 1440         # 60-day momentum (strongest signal)
-    # Momentum weights
-    w_short: 0.16
-    w_medium: 0.24
-    w_long: 0.60           # Heavily weighted toward long-term
-    # Entry threshold
-    entry_threshold: 0.02  # Composite score must exceed 2%
-    # Volatility targeting
-    vol_lookback: 336      # 14-day realized vol window
-    target_vol: 0.50       # Target 50% annualized portfolio vol
-    # ADX trend filter
-    adx_threshold: 22      # Only trade when ADX > 22
-    # Stops
-    atr_sl_mult: 3.0       # Initial stop: 3x ATR
-    trailing_atr_mult: 3.5 # Trailing stop: 3.5x ATR
-    cooldown_bars: 24      # 1-day cooldown after close
-    lookback_bars: 1640    # Indicator warmup window
-```
-
-### Risk Parameters
-
-```yaml
-risk:
-  max_position_size_pct: 0.15  # 15% equity per trade
-  max_open_positions: 3
-  max_drawdown_pct: 0.25       # Halt at 25% drawdown
-  default_stop_loss_pct: 0.03
-  default_take_profit_pct: 0.06
-```
-
-### Trading Pairs
-
-```yaml
-pairs:
-  - symbol: "BTC/USDT:USDT"   # USDT perpetual futures
-    market_type: futures
-    timeframe: "1h"
-    leverage: 7
-
-  - symbol: "ETH/USDT:USDT"
-    market_type: futures
-    timeframe: "1h"
-    leverage: 5
-```
-
-**Symbol format**:
-- `BTC/USDT` — spot
-- `BTC/USDT:USDT` — USDT perpetual futures
+| `scripts/param_sensitivity.py` | Parameter robustness analysis (ROBUST/FRAGILE) |
+| `scripts/fetch_historical.py` | Download OHLCV from Bybit |
+| `scripts/optimize_tsmom.py` | Grid search optimizer for TSMOM |
+| `scripts/validate_strategy.py` | Full validation suite |
 
 ---
 
@@ -229,205 +227,107 @@ pairs:
 
 ```
 algo_trading/
-├── config/
-│   ├── settings.yaml              # Your config (not in git)
-│   └── settings.example.yaml      # Config template
-│
+├── config/settings.yaml                # Trading config
 ├── src/
-│   ├── core/                      # Base models and config
-│   │   ├── config.py              # YAML config loader (Pydantic)
-│   │   ├── enums.py               # Side, OrderType, MarketType, SignalAction
-│   │   ├── models.py              # Signal, Order, Fill, Position
-│   │   └── exceptions.py          # Custom errors
-│   │
-│   ├── indicators/                # Technical indicators
-│   │   ├── base.py                # Base indicator class
-│   │   ├── roc.py                 # Rate of Change (momentum core)
-│   │   ├── realized_vol.py        # Realized Volatility (vol targeting)
-│   │   ├── adx.py                 # Average Directional Index
-│   │   ├── atr.py                 # Average True Range
-│   │   ├── ema.py                 # Exponential Moving Average
-│   │   ├── rsi.py                 # Relative Strength Index
-│   │   ├── macd.py                # MACD
-│   │   ├── donchian.py            # Donchian Channel
-│   │   └── bbands.py              # Bollinger Bands
-│   │
-│   ├── strategies/                # Trading strategies
-│   │   ├── base.py                # Base strategy class
-│   │   ├── tsmom.py               # TSMOM (active, best performer)
-│   │   ├── momentum.py            # EMA crossover (V1/V2/V3) + registry
-│   │   └── breakout.py            # Donchian breakout
-│   │
-│   ├── risk/                      # Risk management
-│   │   ├── manager.py             # SL/TP, leverage, vol-scaled sizing
-│   │   └── position_sizer.py      # Fixed-fraction with leverage
-│   │
-│   ├── exchange/                  # Exchange connectivity
-│   │   ├── base.py                # Abstract client
-│   │   └── bybit_client.py        # Bybit via ccxt
-│   │
-│   ├── execution/                 # Order execution
-│   │   ├── broker.py              # Abstract broker
-│   │   ├── live_broker.py         # Real orders on exchange
-│   │   ├── paper_broker.py        # Virtual orders (paper trading)
-│   │   └── backtest_broker.py     # Backtest execution with SL/TP
-│   │
-│   ├── engine/                    # Trading engines
-│   │   ├── backtest_engine.py     # Bar-by-bar backtest with trailing stops
-│   │   └── live_engine.py         # Live/paper trading loop
-│   │
-│   ├── portfolio/                 # Portfolio tracking
-│   │   ├── tracker.py             # PnL-based equity accounting
-│   │   └── metrics.py             # Sharpe, Sortino, drawdown, win rate
-│   │
-│   └── utils/
-│       └── logger.py              # Logging setup
-│
-├── scripts/                       # Entry points
-│   ├── fetch_historical.py        # Download OHLCV data
-│   ├── run_backtest.py            # Run backtest
-│   ├── run_live.py                # Live/paper trading
-│   ├── validate_strategy.py       # 7-test validation suite
-│   ├── optimize.py                # Grid optimizer (momentum)
-│   ├── optimize_tsmom_v2.py       # 2-stage TSMOM optimizer
-│   ├── finetune_tsmom.py          # Quick leverage/pos tuning
-│   └── test_tsmom.py              # TSMOM config comparison
-│
-├── tests/                         # 47 tests
-├── data/                          # Downloaded CSV (in .gitignore)
-└── logs/                          # Runtime logs (in .gitignore)
+│   ├── core/                           # Config, models, enums
+│   │   ├── config.py                   # Pydantic config + timeframe utils
+│   │   ├── models.py                   # Signal, Order, Fill, Position
+│   │   └── enums.py                    # Side, OrderType, SignalAction
+│   ├── indicators/                     # Technical indicators
+│   │   ├── base.py                     # Abstract Indicator class
+│   │   ├── regime.py                   # Regime filter (ADX + ER + vol z-score)
+│   │   ├── realized_vol.py            # Realized vol (simple + EWMA modes)
+│   │   ├── roc.py, adx.py, atr.py    # Momentum, trend, volatility
+│   │   ├── ema.py, rsi.py, macd.py   # Moving averages, oscillators
+│   │   └── bbands.py, donchian.py     # Bands, channels
+│   ├── strategies/                     # Trading strategies
+│   │   ├── base.py                     # Abstract BaseStrategy
+│   │   ├── tsmom.py                    # TSMOM (active, best performer)
+│   │   ├── momentum.py                 # EMA crossover variants + registry
+│   │   └── breakout.py                 # Donchian breakout
+│   ├── risk/                           # Risk management
+│   │   ├── manager.py                  # Signal→Order + risk checks
+│   │   └── position_sizer.py          # Vol-scaled + DD deleveraging
+│   ├── execution/                      # Order execution
+│   │   ├── backtest_broker.py         # Realistic fees + slippage
+│   │   ├── paper_broker.py            # Virtual orders
+│   │   └── live_broker.py             # Real exchange orders
+│   ├── engine/                         # Trading loops
+│   │   ├── backtest_engine.py         # Bar-by-bar + funding rate
+│   │   └── live_engine.py             # Live loop + rolling monitors
+│   ├── portfolio/                      # Portfolio tracking
+│   │   ├── tracker.py                  # PnL accounting + equity curve
+│   │   ├── metrics.py                  # Sharpe, Sortino, DD, win rate
+│   │   ├── rolling_metrics.py         # 30d rolling monitors + alerts
+│   │   └── persistence.py             # SQLite storage
+│   ├── exchange/
+│   │   └── bybit_client.py            # Bybit via ccxt
+│   ├── notifications/
+│   │   └── telegram.py                 # Trade alerts + degradation alerts
+│   └── data/
+│       ├── feed.py                     # Data feed (historical + live)
+│       └── historical.py               # CSV data management
+├── scripts/                            # Entry points + analysis tools
+├── tests/                              # 148 tests
+├── dashboard/                          # Web UI (FastAPI + HTMX)
+├── docker-compose.yml
+├── Dockerfile
+└── .github/workflows/                  # CI/CD
+    ├── ci.yml                          # Test on push
+    └── deploy.yml                      # Auto-deploy to VPS
 ```
 
 ---
 
-## Deployment
+## Versioning
 
-### Option 1: Docker (recommended)
-
-```bash
-# On your machine — push to GitHub/GitLab
-git init && git add -A && git commit -m "init"
-git remote add origin git@github.com:you/algo-trading.git
-git push -u origin main
-
-# On server
-git clone git@github.com:you/algo-trading.git
-cd algo-trading
-
-# Configure
-cp config/settings.example.yaml config/settings.yaml
-nano config/settings.yaml
-
-cp .env.example .env
-nano .env                    # API keys
-
-# Start
-docker compose up -d         # -d = background
-docker compose logs -f       # View logs
-docker compose down          # Stop
-```
-
-**Switch to live trading**: in `docker-compose.yml` change:
-```yaml
-command: ["scripts/run_live.py", "--mode", "live"]
-```
-
-### Option 2: VPS without Docker
-
-```bash
-git clone <repo> /opt/algo_trading
-cd /opt/algo_trading
-bash deploy/setup-vps.sh
-
-nano /opt/algo_trading/.env
-nano /opt/algo_trading/config/settings.yaml
-
-# Service management
-systemctl start algo-trading
-systemctl stop algo-trading
-systemctl status algo-trading
-journalctl -u algo-trading -f
-```
-
-Bot auto-restarts on crash or server reboot.
-
-### Server Recommendations
-
-| Provider | Plan | Price |
-|---|---|---|
-| **Hetzner** (Germany) | CX22 — 2 vCPU, 4GB RAM | ~$4/mo |
-| **DigitalOcean** | Basic — 1 vCPU, 1GB RAM | $6/mo |
-| **AWS Lightsail** | 1 vCPU, 512MB RAM | $3.50/mo |
-
-The bot needs ~50MB RAM, wakes up once per hour. Any cheap VPS works.
+| Version | Date | Changes |
+|---------|------|---------|
+| **v0.3.0** | 2026-03-03 | Regime filter, drawdown deleveraging, rolling monitors, param sensitivity |
+| v0.2.0 | 2026-03-02 | Timeframe normalization, EWMA vol, realistic fees/funding/slippage |
+| v0.1.0 | 2026-03-01 | Infrastructure: Docker, Telegram, dashboard, CI/CD, SQLite |
+| v0.0.1 | 2026-02-28 | Core engine, TSMOM strategy, backtesting, 47 tests |
 
 ---
 
-## How to Add a New Strategy
+## Roadmap
 
-1. Create `src/strategies/my_strategy.py`
-2. Inherit from `BaseStrategy`
-3. Implement `setup()` and `generate_signals()`
-4. Register in `STRATEGY_REGISTRY` (in `momentum.py`)
+### Phase 1.2 — Validate Robustness
+- [ ] Walk-forward validation (rolling 6mo train / 2mo test)
+- [ ] Monte Carlo confidence intervals
+- [ ] Regime-segmented backtest (bull / bear / chop separately)
+- [ ] 3-6 months live track record with monitoring
 
-```python
-from src.strategies.base import BaseStrategy
-from src.core.models import Signal
-from src.core.enums import SignalAction
+### Phase 2 — Multi-Strategy
+- [ ] Mean reversion strategy (for choppy markets)
+- [ ] Strategy-level P&L separation
+- [ ] Risk budget allocator (not just signal blending)
+- [ ] Correlation monitoring between strategies
 
-class MyStrategy(BaseStrategy):
-    def setup(self, config):
-        self.indicators = [...]
-
-    def generate_signals(self, df):
-        # Return list of signals based on indicator values
-        return [Signal(
-            timestamp=..., symbol="",
-            action=SignalAction.LONG, strength=1.0,
-            metadata={"atr_sl": atr * 2.0, "no_tp": True},
-        )]
-```
-
-5. In `config/settings.yaml`:
-```yaml
-strategy:
-  name: my_strategy
-```
-
----
-
-## Logs
-
-- `logs/algo_trading.log` — all bot actions (DEBUG level)
-- `logs/trades.log` — trades only (OPEN / CLOSE with prices and PnL)
+### Phase 3 — Fund Infrastructure
+- [ ] PostgreSQL + immutable trade ledger
+- [ ] NAV engine + investor reporting
+- [ ] Monitoring (Grafana / Prometheus)
+- [ ] Backup / disaster recovery
 
 ---
 
 ## FAQ
 
 **Q: Is it safe to run?**
-By default the bot runs on **testnet** (Bybit test network). No real money is used. To switch to mainnet, explicitly set `testnet: false` in config and confirm launch.
-
-**Q: How many pairs can I trade?**
-As many as you want — add them to `pairs` in config. Each pair is processed every tick.
-
-**Q: How often does the bot trade?**
-TSMOM with slow lookbacks (48/336/1440h) generates ~60 trades per year per asset. Signals appear when multi-period momentum crosses the threshold — roughly every few days.
-
-**Q: What if internet drops?**
-The bot logs the error and retries after 30 seconds. Stop-Loss orders on the exchange trigger independently of the bot.
-
-**Q: How to stop the bot?**
-`Ctrl+C` — graceful shutdown.
-
-**Q: How to get Bybit testnet API keys?**
-1. Go to https://testnet.bybit.com
-2. Register
-3. Go to API Management
-4. Create a key with trading permissions
+By default the bot runs on testnet. No real money. Set `testnet: false` for mainnet.
 
 **Q: Why is win rate only 38%?**
-This is normal for trend-following strategies. You lose frequently on small trades and win rarely on big ones. The average win ($430) is 2.5x the average loss ($171). This is how AQR, Man Group, and Turtle Traders operate.
+Normal for trend-following. Small frequent losses, large rare wins. Average win ($430) is 2.5x average loss ($171). This is how AQR and Man Group operate.
 
-**Q: What is Volatility Targeting?**
-The strategy measures recent price volatility and adjusts position size accordingly. When the market is chaotic (high vol), it trades smaller. When calm (low vol), it trades bigger. This normalizes returns across market regimes and is the key innovation that separates professional trend-following from amateur trading.
+**Q: What is the regime filter?**
+It classifies the market as "trending" or "choppy" using ADX, efficiency ratio (directional consistency), and volatility z-score. In choppy markets, the bot doesn't open new positions — only manages existing ones.
+
+**Q: How does drawdown deleveraging work?**
+Instead of binary "trade or stop", position size scales linearly: 100% at 0-10% drawdown, 50% at 17.5%, 0% at 25%. This reduces risk gradually as losses accumulate.
+
+**Q: How to run parameter sensitivity analysis?**
+```bash
+python -m scripts.param_sensitivity --data data/BTCUSDT_USDT_1h.csv --output results.json
+```
+Tests ±20% shift on 10 key parameters. Classifies each as ROBUST/MODERATE/FRAGILE.
