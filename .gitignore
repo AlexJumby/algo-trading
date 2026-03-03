@@ -19,6 +19,9 @@ data/*.csv
 data/*.parquet
 logs/
 
+# Claude Code
+.claude/
+
 # IDE
 .vscode/
 .idea/
