@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 
 import pandas as pd
 
+from src.core.config import TIMEFRAME_MS
+
 
 class DataFeed(ABC):
     """Provides OHLCV bar data. Abstracted so backtest and live share the same interface."""
@@ -25,6 +27,11 @@ class HistoricalDataFeed(DataFeed):
     def __init__(self, df: pd.DataFrame):
         self._full_data = df.reset_index(drop=True)
         self._current_index = 0
+
+    @property
+    def full_data(self) -> pd.DataFrame:
+        """Public read-only access to the full dataset."""
+        return self._full_data
 
     def advance(self) -> None:
         self._current_index += 1
@@ -60,12 +67,7 @@ class CcxtDataFeed(DataFeed):
     # Bybit returns max 1000 candles per request
     MAX_PER_REQUEST = 1000
 
-    # Timeframe to milliseconds
-    TF_MS = {
-        "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
-        "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000,
-        "6h": 21_600_000, "12h": 43_200_000, "1d": 86_400_000,
-    }
+    TF_MS = TIMEFRAME_MS
 
     def __init__(self, exchange_client):
         self.client = exchange_client

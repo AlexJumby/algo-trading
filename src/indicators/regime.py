@@ -45,6 +45,12 @@ class RegimeFilter(Indicator):
             threshold: Score below this → "choppy".
             w_adx, w_er, w_vol: Component weights (must sum to 1).
         """
+        weight_sum = w_adx + w_er + w_vol
+        if abs(weight_sum - 1.0) > 1e-6:
+            raise ValueError(
+                f"Regime filter weights must sum to 1.0, got {weight_sum:.4f} "
+                f"(w_adx={w_adx}, w_er={w_er}, w_vol={w_vol})"
+            )
         self.period = period
         self.vol_period = vol_period
         self.threshold = threshold

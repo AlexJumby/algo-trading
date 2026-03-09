@@ -7,13 +7,17 @@ import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
-from src.core.config import AppConfig, TradingPairConfig
-from src.core.enums import MarketType, Side
+from src.core.config import (
+    AppConfig, TradingPairConfig,
+    TIMEFRAME_SECONDS,
+    bars_per_year as _bars_per_year,
+)
+from src.core.enums import MarketType
 from src.data.feed import CcxtDataFeed
 from src.execution.broker import Broker
 from src.execution.paper_broker import PaperBroker
+from src.execution.stops import trail_stop
 from src.exchange.bybit_client import BybitClient
-from src.core.config import bars_per_year as _bars_per_year
 from src.notifications.telegram import TelegramNotifier
 from src.portfolio.rolling_metrics import RollingMetrics
 from src.portfolio.tracker import PortfolioTracker
@@ -23,13 +27,6 @@ from src.utils.logger import get_logger
 
 logger = get_logger("live_engine")
 console = Console()
-
-# Timeframe to seconds mapping
-TIMEFRAME_SECONDS = {
-    "1m": 60, "3m": 180, "5m": 300, "15m": 900,
-    "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400,
-    "6h": 21600, "12h": 43200, "1d": 86400,
-}
 
 STOP_CHECK_INTERVAL = 300  # Check stops every 5 minutes between candles
 STATUS_INTERVAL = 4 * 3600  # Periodic Telegram status every 4 hours
@@ -217,7 +214,32 @@ class LiveEngine:
                     last_row = df.iloc[-1]
                     if not pd.isna(last_row.get(self._atr_col)):
                         atr_val = float(last_row[self._atr_col])
-                        self._trail_stops(symbol, current_price, atr_val)
+                        if symbol in self.portfolio.open_positions:
+                            pos = self.portfolio.open_positions[symbol]
+                            old_sl = pos.stop_loss
+                            updated = trail_stop(pos, current_price, atr_val, self._trail_mult)
+                            if updated:
+                                old = f"${old_sl:,.2f}" if old_sl else "None"
+                                new = f"${pos.stop_loss:,.2f}"
+                                logger.info(
+                                    f"Trailing stop updated {symbol}: "
+                                    f"{old} -> {new}"
+                                )
+                                if self.notifier:
+                                    self.notifier.notify_trailing_stop(
+                                        symbol, old_sl, pos.stop_loss, current_price,
+                                    )
+                                is_live = not isinstance(self.broker, PaperBroker)
+                                if is_live and self.exchange_client:
+                                    try:
+                                        self.exchange_client.update_trading_stop(
+                                            symbol, pos.stop_loss,
+                                        )
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"Could not update exchange stop "
+                                            f"for {symbol}: {e}"
+                                        )
 
                 # --- Check stops (paper mode) ---
                 if isinstance(self.broker, PaperBroker):
@@ -344,37 +366,6 @@ class LiveEngine:
                         )
             except Exception as e:
                 logger.debug(f"Mid-candle check failed for {symbol}: {e}")
-
-    def _trail_stops(self, symbol: str, price: float, atr: float) -> None:
-        """Move stop-loss in the direction of profit (trailing stop)."""
-        if symbol not in self.portfolio.open_positions:
-            return
-        pos = self.portfolio.open_positions[symbol]
-        old_sl = pos.stop_loss
-
-        if pos.side == Side.BUY:
-            new_sl = price - atr * self._trail_mult
-            if old_sl is None or new_sl > old_sl:
-                pos.stop_loss = new_sl
-        else:
-            new_sl = price + atr * self._trail_mult
-            if old_sl is None or new_sl < old_sl:
-                pos.stop_loss = new_sl
-
-        if pos.stop_loss != old_sl:
-            logger.info(
-                f"Trailing stop updated {symbol}: "
-                f"{f'${old_sl:,.2f}' if old_sl else 'None'} -> ${pos.stop_loss:,.2f}"
-            )
-            # Telegram: trailing stop moved (only log significant moves)
-            if self.notifier:
-                self.notifier.notify_trailing_stop(symbol, old_sl, pos.stop_loss, price)
-            # For live mode: update stop on exchange
-            if not isinstance(self.broker, PaperBroker) and self.exchange_client:
-                try:
-                    self.exchange_client.update_trading_stop(symbol, pos.stop_loss)
-                except Exception as e:
-                    logger.warning(f"Could not update exchange stop for {symbol}: {e}")
 
     def _print_status(self) -> None:
         table = Table(title="Portfolio Status", show_lines=True)

@@ -33,6 +33,7 @@ class PortfolioTracker:
         self._realized_pnl = 0.0
         self._total_fees = 0.0
         self._position_entry_fees: dict[str, float] = {}
+        self._peak_equity = initial_capital
 
         # Restore state from DB if available
         if db:
@@ -65,13 +66,10 @@ class PortfolioTracker:
 
     @property
     def current_drawdown_pct(self) -> float:
-        if not self.equity_curve:
+        if self._peak_equity <= 0:
             return 0.0
-        peak = max(snap.equity for snap in self.equity_curve)
         current_eq = self.equity
-        if peak <= 0:
-            return 0.0
-        return max(0.0, (peak - current_eq) / peak)
+        return max(0.0, (self._peak_equity - current_eq) / self._peak_equity)
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -160,6 +158,8 @@ class PortfolioTracker:
         self._realized_pnl = self.db.get_total_realized_pnl()
         self._total_fees = self.db.get_total_fees()
         self.closed_trades = self.db.get_trades(limit=50000)
+        # Update peak equity based on restored state
+        self._peak_equity = max(self._peak_equity, self.equity)
         trade_logger.info(
             f"Restored from DB: {len(self.closed_trades)} trades, "
             f"realized_pnl=${self._realized_pnl:.2f}"
@@ -201,6 +201,15 @@ class PortfolioTracker:
             self.db.save_open_positions(self.open_positions)
 
     # ------------------------------------------------------------------
+    # Funding costs
+    # ------------------------------------------------------------------
+
+    def apply_funding_cost(self, cost: float) -> None:
+        """Deduct a funding cost from realized PnL (reduces equity)."""
+        self._realized_pnl -= cost
+        self._total_fees += cost
+
+    # ------------------------------------------------------------------
     # Price updates & snapshots
     # ------------------------------------------------------------------
 
@@ -210,9 +219,12 @@ class PortfolioTracker:
                 self.open_positions[symbol].current_price = price
 
     def take_snapshot(self, timestamp: int) -> PortfolioSnapshot:
+        eq = self.equity
+        if eq > self._peak_equity:
+            self._peak_equity = eq
         snapshot = PortfolioSnapshot(
             timestamp=timestamp,
-            equity=self.equity,
+            equity=eq,
             cash=self.cash,
             unrealized_pnl=self.unrealized_pnl,
             realized_pnl=self._realized_pnl,

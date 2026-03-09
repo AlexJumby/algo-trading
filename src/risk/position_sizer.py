@@ -15,7 +15,9 @@ class PositionSizer:
         method = self.config.position_sizing_method
         if method == "fixed_fraction":
             return self._fixed_fraction(equity, price, signal, leverage, drawdown_pct)
-        return self._fixed_fraction(equity, price, signal, leverage, drawdown_pct)
+        raise ValueError(
+            f"Unknown position_sizing_method '{method}'. Supported: 'fixed_fraction'"
+        )
 
     def _fixed_fraction(
         self, equity: float, price: float, signal: Signal, leverage: int = 1,

@@ -17,6 +17,10 @@ TIMEFRAME_MINUTES: dict[str, int] = {
 }
 
 
+TIMEFRAME_SECONDS: dict[str, int] = {k: v * 60 for k, v in TIMEFRAME_MINUTES.items()}
+TIMEFRAME_MS: dict[str, int] = {k: v * 60_000 for k, v in TIMEFRAME_MINUTES.items()}
+
+
 def timeframe_to_minutes(tf: str) -> int:
     """Convert timeframe string (e.g. '1h', '4h') to minutes."""
     if tf not in TIMEFRAME_MINUTES:

@@ -6,8 +6,8 @@ from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 
 from src.core.config import AppConfig, bars_per_year as _bars_per_year
-from src.core.enums import Side
 from src.data.feed import HistoricalDataFeed
+from src.execution.stops import trail_stop
 from src.execution.backtest_broker import BacktestBroker
 from src.portfolio.metrics import PerformanceMetrics
 from src.portfolio.tracker import PortfolioTracker
@@ -84,7 +84,7 @@ class BacktestEngine:
     def _run_loop_silent(self, symbol: str, lookback: int) -> None:
         """Fast loop: pre-compute indicators once, then iterate."""
         # Pre-compute all indicators on the full dataset (huge speedup)
-        full_df = self.data_feed._full_data.copy()
+        full_df = self.data_feed.full_data.copy()
         full_df = self.strategy.apply_indicators(full_df)
         total = len(full_df)
 
@@ -104,7 +104,9 @@ class BacktestEngine:
                 # Trailing stop: move SL in profit direction
                 if trail_mult > 0 and atr_col and atr_col in full_df.columns:
                     atr_val = float(full_df.iloc[idx][atr_col])
-                    self._trail_stops(symbol, current_price, atr_val, trail_mult)
+                    if symbol in self.portfolio.open_positions:
+                        pos = self.portfolio.open_positions[symbol]
+                        trail_stop(pos, current_price, atr_val, trail_mult)
 
                 stop_fills = self.broker.check_stops(
                     self.portfolio, {symbol: current_price}, timestamp,
@@ -134,22 +136,6 @@ class BacktestEngine:
             self.portfolio.update_prices({symbol: current_price})
             self.portfolio.take_snapshot(timestamp)
 
-    def _trail_stops(
-        self, symbol: str, price: float, atr: float, mult: float,
-    ) -> None:
-        """Move stop-loss in the direction of profit (trailing stop)."""
-        if symbol not in self.portfolio.open_positions:
-            return
-        pos = self.portfolio.open_positions[symbol]
-        if pos.side == Side.BUY:
-            new_sl = price - atr * mult
-            if pos.stop_loss is None or new_sl > pos.stop_loss:
-                pos.stop_loss = new_sl
-        else:
-            new_sl = price + atr * mult
-            if pos.stop_loss is None or new_sl < pos.stop_loss:
-                pos.stop_loss = new_sl
-
     def _apply_funding(self, symbol: str, price: float, timestamp: int) -> None:
         """Deduct funding cost for open perpetual positions.
 
@@ -176,9 +162,7 @@ class BacktestEngine:
             periods = int(elapsed / self._funding_interval_ms)
             notional = pos.quantity * price
             cost = notional * self._funding_rate * periods
-            # Deduct from realized_pnl (reduces equity → reduces cash)
-            self.portfolio._realized_pnl -= cost
-            self.portfolio._total_fees += cost
+            self.portfolio.apply_funding_cost(cost)
             self._total_funding += cost
             self._last_funding_ts[symbol] = last_ts + periods * self._funding_interval_ms
 
@@ -212,7 +196,9 @@ class BacktestEngine:
                         last_row = df.iloc[-1]
                         if not pd.isna(last_row.get(atr_col)):
                             atr_val = float(last_row[atr_col])
-                            self._trail_stops(symbol, current_price, atr_val, trail_mult)
+                            if symbol in self.portfolio.open_positions:
+                                pos = self.portfolio.open_positions[symbol]
+                                trail_stop(pos, current_price, atr_val, trail_mult)
 
                     stop_fills = self.broker.check_stops(
                         self.portfolio, {symbol: current_price}, timestamp,
