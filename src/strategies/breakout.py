@@ -73,7 +73,7 @@ class BreakoutTrendStrategy(BaseStrategy):
     def on_fill(self, fill: Fill) -> None:
         self._bars_since_fill = 0
 
-    def generate_signals(self, df: pd.DataFrame) -> list[Signal]:
+    def generate_signals(self, df: pd.DataFrame, symbol: str = "") -> list[Signal]:
         self._bars_since_fill += 1
 
         if len(df) < 3:

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 
 import pandas as pd
 
 from src.core.config import TIMEFRAME_MS
+from src.utils.logger import get_logger
+
+logger = get_logger("feed")
 
 
 class DataFeed(ABC):
@@ -77,7 +81,6 @@ class CcxtDataFeed(DataFeed):
             return self.client.fetch_ohlcv(symbol, timeframe, limit=count)
 
         # Paginated fetch: work backwards from now
-        import time
         tf_ms = self.TF_MS.get(timeframe, 3_600_000)
         now_ms = int(time.time() * 1000)
         start_ms = now_ms - count * tf_ms
@@ -106,6 +109,18 @@ class CcxtDataFeed(DataFeed):
 
         combined = pd.concat(all_frames, ignore_index=True)
         combined = combined.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+
+        # Detect data gaps (>3x expected interval)
+        if len(combined) > 1:
+            gaps = combined["timestamp"].diff().dropna()
+            max_gap = gaps.max()
+            if max_gap > tf_ms * 3:
+                logger.warning(
+                    f"Data gap detected for {symbol}: "
+                    f"max gap = {max_gap / tf_ms:.0f} bars "
+                    f"(expected 1). ATR/indicators may be unreliable."
+                )
+
         return combined.tail(count).reset_index(drop=True)
 
     def get_current_price(self, symbol: str) -> float:

@@ -103,12 +103,22 @@ class RiskManager:
             quantity=pos.quantity,
         )
 
+    # Max SL distance as fraction of price (15%)
+    MAX_SL_PCT = 0.15
+
     def _compute_stop_loss(
         self, action: SignalAction, price: float, metadata: dict = None,
     ) -> float:
         # ATR-based SL if provided by strategy
         if metadata and "atr_sl" in metadata:
             atr_sl = metadata["atr_sl"]
+            max_sl = price * self.MAX_SL_PCT
+            if atr_sl > max_sl:
+                logger.warning(
+                    f"ATR SL clamped: {atr_sl:.2f} -> {max_sl:.2f} "
+                    f"(ATR={metadata.get('atr', '?')}, max {self.MAX_SL_PCT:.0%} of price)"
+                )
+                atr_sl = max_sl
             if action == SignalAction.LONG:
                 return price - atr_sl
             elif action == SignalAction.SHORT:

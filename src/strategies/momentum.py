@@ -33,7 +33,7 @@ class MomentumStrategy(BaseStrategy):
             MACDIndicator(self.macd_fast, self.macd_slow, self.macd_signal),
         ]
 
-    def generate_signals(self, df: pd.DataFrame) -> list[Signal]:
+    def generate_signals(self, df: pd.DataFrame, symbol: str = "") -> list[Signal]:
         if len(df) < 2:
             return []
 
@@ -119,7 +119,7 @@ class MomentumV2Strategy(BaseStrategy):
             ATRIndicator(self.atr_period),
         ]
 
-    def generate_signals(self, df: pd.DataFrame) -> list[Signal]:
+    def generate_signals(self, df: pd.DataFrame, symbol: str = "") -> list[Signal]:
         if len(df) < 3:
             return []
 
@@ -277,7 +277,7 @@ class MomentumV3Strategy(BaseStrategy):
         # Any fill triggers cooldown reset — the engine calls on_fill for opens and closes
         self._bars_since_close = 0
 
-    def generate_signals(self, df: pd.DataFrame) -> list[Signal]:
+    def generate_signals(self, df: pd.DataFrame, symbol: str = "") -> list[Signal]:
         self._bars_since_close += 1
 
         if len(df) < 3:

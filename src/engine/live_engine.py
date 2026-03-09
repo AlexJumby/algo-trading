@@ -100,6 +100,8 @@ class LiveEngine:
 
         # Sync existing positions from exchange on startup
         self._sync_positions(pairs)
+        # Also sync strategy state for DB-restored positions
+        self.strategy.sync_state(self.portfolio)
 
         console.print("[bold green]Live engine started[/bold green]")
         console.print(f"  Pairs: {[p.symbol for p in pairs]}")
@@ -184,6 +186,9 @@ class LiveEngine:
                 logger.info(f"Synced {len(exchange_positions)} position(s) from exchange")
             else:
                 logger.info("No open positions on exchange")
+
+            # Sync strategy state with restored positions
+            self.strategy.sync_state(self.portfolio)
         except Exception as e:
             logger.warning(f"Could not sync positions: {e}")
 
@@ -279,7 +284,7 @@ class LiveEngine:
                     continue
 
                 # --- Generate signals and trade ---
-                signals = self.strategy.generate_signals(df)
+                signals = self.strategy.generate_signals(df, symbol)
 
                 for signal_obj in signals:
                     signal_obj.symbol = symbol
@@ -316,22 +321,22 @@ class LiveEngine:
                                         self.portfolio.current_drawdown_pct,
                                     )
 
-                # Take snapshot
-                self.portfolio.take_snapshot(now_ms)
-
-                # Rolling metrics (after enough data)
-                if len(self.portfolio.equity_curve) >= 48:
-                    self._last_rolling = self._rolling_metrics.compute(
-                        self.portfolio.equity_curve,
-                        self.portfolio.closed_trades,
-                    )
-                    if self._last_rolling.get("degradation_alert") and self.notifier:
-                        self.notifier.notify_degradation(self._last_rolling)
-
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}", exc_info=True)
                 if self.notifier:
                     self.notifier.notify_error(f"{symbol}: {e}")
+
+        # Take snapshot ONCE per tick (after all pairs processed)
+        self.portfolio.take_snapshot(now_ms)
+
+        # Rolling metrics (after enough data)
+        if len(self.portfolio.equity_curve) >= 48:
+            self._last_rolling = self._rolling_metrics.compute(
+                self.portfolio.equity_curve,
+                self.portfolio.closed_trades,
+            )
+            if self._last_rolling.get("degradation_alert") and self.notifier:
+                self.notifier.notify_degradation(self._last_rolling)
 
     def _check_stops_quick(self, pairs: list[TradingPairConfig]) -> None:
         """Quick mid-candle stop check — only fetch price + check SL/TP."""

@@ -99,7 +99,7 @@ class BacktestEngine:
 
             if idx >= lookback - 1:
                 window = full_df.iloc[max(0, idx - lookback + 1):idx + 1]
-                signals = self.strategy.generate_signals(window)
+                signals = self.strategy.generate_signals(window, symbol)
 
                 # Trailing stop: move SL in profit direction
                 if trail_mult > 0 and atr_col and atr_col in full_df.columns:
@@ -189,7 +189,7 @@ class BacktestEngine:
 
                 if len(df) >= lookback:
                     df = self.strategy.apply_indicators(df)
-                    signals = self.strategy.generate_signals(df)
+                    signals = self.strategy.generate_signals(df, symbol)
 
                     # Trailing stop: move SL in profit direction
                     if trail_mult > 0 and atr_col and atr_col in df.columns:

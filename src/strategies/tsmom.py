@@ -93,10 +93,8 @@ class TSMOMStrategy(BaseStrategy):
         self.regime_period = p.get("regime_period", self.adx_period)
         self.regime_threshold = p.get("regime_threshold", 0.4)
 
-        # --- Internal state ---
-        self._bars_since_fill = 999
-        self._bars_in_position = 0
-        self._in_position = False
+        # --- Per-symbol state ---
+        self._state: dict[str, dict] = {}
 
         # --- Indicators ---
         self.indicators = [
@@ -121,22 +119,37 @@ class TSMOMStrategy(BaseStrategy):
                 )
             )
 
-    def on_fill(self, fill: Fill) -> None:
-        self._bars_since_fill = 0
-        # Toggle position tracking
-        if self._in_position:
-            # This is a close fill
-            self._in_position = False
-            self._bars_in_position = 0
-        else:
-            # This is an open fill
-            self._in_position = True
-            self._bars_in_position = 0
+    def _get_state(self, symbol: str) -> dict:
+        """Get per-symbol state, creating defaults if needed."""
+        if symbol not in self._state:
+            self._state[symbol] = {
+                "bars_since_fill": 999,
+                "bars_in_position": 0,
+                "in_position": False,
+            }
+        return self._state[symbol]
 
-    def generate_signals(self, df: pd.DataFrame) -> list[Signal]:
-        self._bars_since_fill += 1
-        if self._in_position:
-            self._bars_in_position += 1
+    def on_fill(self, fill: Fill) -> None:
+        st = self._get_state(fill.symbol)
+        st["bars_since_fill"] = 0
+        if st["in_position"]:
+            st["in_position"] = False
+            st["bars_in_position"] = 0
+        else:
+            st["in_position"] = True
+            st["bars_in_position"] = 0
+
+    def sync_state(self, portfolio) -> None:
+        """Sync per-symbol state with actual portfolio positions."""
+        for symbol, pos in portfolio.open_positions.items():
+            st = self._get_state(symbol)
+            st["in_position"] = True
+
+    def generate_signals(self, df: pd.DataFrame, symbol: str = "") -> list[Signal]:
+        st = self._get_state(symbol)
+        st["bars_since_fill"] += 1
+        if st["in_position"]:
+            st["bars_in_position"] += 1
 
         if len(df) < 3:
             return []
@@ -209,20 +222,20 @@ class TSMOMStrategy(BaseStrategy):
 
         # --- Filters ---
         trending = adx > self.adx_threshold
-        in_cooldown = self._bars_since_fill < self.cooldown_bars
+        in_cooldown = st["bars_since_fill"] < self.cooldown_bars
 
         signals = []
 
         # --- EXIT SIGNALS (check first) ---
-        if self._in_position:
+        if st["in_position"]:
             # Max hold period exit
-            if self.max_hold_bars > 0 and self._bars_in_position >= self.max_hold_bars:
+            if self.max_hold_bars > 0 and st["bars_in_position"] >= self.max_hold_bars:
                 signals.append(Signal(
                     timestamp=int(curr["timestamp"]),
                     symbol="",
                     action=SignalAction.CLOSE,
                     strength=1.0,
-                    metadata={"trigger": "max_hold_exit", "bars_held": self._bars_in_position},
+                    metadata={"trigger": "max_hold_exit", "bars_held": st["bars_in_position"]},
                 ))
                 return signals
 
@@ -251,7 +264,7 @@ class TSMOMStrategy(BaseStrategy):
         if self.regime_enabled and regime_state == "choppy":
             return signals  # Only exits above, no new entries
 
-        if not self._in_position and not in_cooldown:
+        if not st["in_position"] and not in_cooldown:
             # --- LONG entry ---
             long_conditions = (
                 mom_score > self.entry_threshold
