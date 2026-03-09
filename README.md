@@ -1,10 +1,10 @@
-# Algo Trading System v0.3.1
+# Algo Trading System v0.4.0
 
 Quantitative trading system for crypto perpetual futures (Bybit). Designed with fund-level architecture: signal layer, risk layer, execution layer, portfolio layer, infrastructure layer.
 
 **Active strategy:** TSMOM (Time-Series Momentum + Volatility Management) — based on Moskowitz, Ooi, Pedersen (2012), used by AQR Capital and Man Group.
 
-**Status:** Paper trading on Bybit testnet. Robustness validated (walk-forward, Monte Carlo, regime segmentation). 192 tests, Docker + CI/CD.
+**Status:** Paper trading on Bybit testnet. Robustness validated (walk-forward, Monte Carlo, regime segmentation). Two code review rounds completed. 192 tests, Docker + CI/CD.
 
 ---
 
@@ -70,7 +70,8 @@ Infrastructure Layer                                                v
 ### Risk Layer
 - **Volatility targeting** — scales position size to 50% annualized vol target
 - **Drawdown deleveraging** — linear position reduction from 10% DD (full size) to 25% DD (zero)
-- **ATR trailing stop** — 3.5x ATR, moves with price, no fixed TP
+- **ATR trailing stop** — 3.5x ATR, moves with price, no fixed TP (shared `trail_stop()` logic)
+- **ATR SL sanity clamp** — stop-loss distance capped at 15% of price (prevents absurd SL from data gaps)
 - **Max leverage cap** — 5x notional/equity hard limit per position
 - **Max drawdown halt** — full stop at 25%
 
@@ -79,12 +80,15 @@ Infrastructure Layer                                                v
 - **Paper + live modes** — paper broker with realistic maker/taker fees
 - **Dynamic slippage** — base + impact per $100k notional
 - **Funding rate** — 0.01%/8h perpetual funding in backtest
+- **Data gap detection** — warns when OHLCV data has gaps > 3x expected interval
+- **Consolidated stop logic** — `check_stops()` in base Broker, `trail_stop()` in shared module
 
 ### Portfolio Layer
 - **Rolling metrics** — 30-day Sharpe, Sortino, expectancy, win rate, profit factor
 - **Degradation alerts** — Telegram alert when rolling Sharpe crosses below 0
 - **Equity curve persistence** — SQLite snapshots every bar
 - **Performance metrics** — Sharpe, Sortino, max DD, profit factor, best/worst trade
+- **O(1) drawdown** — peak equity tracked incrementally, no full-curve scan
 
 ### Infrastructure
 - **Docker deployment** — single `docker compose up -d`
@@ -265,9 +269,11 @@ algo_trading/
 │   │   ├── manager.py                  # Signal→Order + risk checks
 │   │   └── position_sizer.py          # Vol-scaled + DD deleveraging
 │   ├── execution/                      # Order execution
+│   │   ├── broker.py                  # Base broker (shared check_stops)
 │   │   ├── backtest_broker.py         # Realistic fees + slippage
 │   │   ├── paper_broker.py            # Virtual orders
-│   │   └── live_broker.py             # Real exchange orders
+│   │   ├── live_broker.py             # Real exchange orders
+│   │   └── stops.py                   # Shared trail_stop() logic
 │   ├── engine/                         # Trading loops
 │   │   ├── backtest_engine.py         # Bar-by-bar + funding rate
 │   │   └── live_engine.py             # Live loop + rolling monitors
@@ -299,7 +305,8 @@ algo_trading/
 
 | Version | Date | Changes |
 |---------|------|---------|
-| **v0.3.1** | 2026-03-03 | Walk-forward validation, Monte Carlo CI, regime-segmented backtest |
+| **v0.4.0** | 2026-03-09 | Code review refactoring: ATR/SL clamp, per-symbol state, O(1) drawdown, stop dedup, data gap detection, snapshot fix |
+| v0.3.1 | 2026-03-03 | Walk-forward validation, Monte Carlo CI, regime-segmented backtest |
 | v0.3.0 | 2026-03-03 | Regime filter, drawdown deleveraging, rolling monitors, param sensitivity |
 | v0.2.0 | 2026-03-02 | Timeframe normalization, EWMA vol, realistic fees/funding/slippage |
 | v0.1.0 | 2026-03-01 | Infrastructure: Docker, Telegram, dashboard, CI/CD, SQLite |
@@ -313,7 +320,11 @@ algo_trading/
 - [x] Walk-forward validation (11 OOS folds, 7/11 profitable, WF efficiency 77%)
 - [x] Monte Carlo confidence intervals (10k reshuffles, 0% prob of negative return)
 - [x] Regime-segmented backtest (bull +83%, bear +55%, chop -42%)
-- [ ] 4-8 weeks paper trading track record
+- [ ] 4-8 weeks paper trading track record (in progress)
+
+### Phase 1.3 — Code Review Hardening ✅
+- [x] Code review round 1: O(1) drawdown, check_stops dedup, trail_stop extraction, encapsulation fixes
+- [x] Code review round 2: ATR/SL clamp, per-symbol strategy state, snapshot dedup, data gap detection, sync_state on restart
 
 ### Phase 2 — Multi-Strategy
 - [ ] Mean reversion strategy (for choppy markets)
