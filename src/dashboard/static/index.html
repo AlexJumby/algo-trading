@@ -243,6 +243,34 @@
         const REFRESH_MS = 60_000;
         const API_BASE = '';
 
+        // ======================== Auth ========================
+        function getToken() {
+            return localStorage.getItem('dashboard_token') || '';
+        }
+
+        function promptToken() {
+            const token = prompt('Enter dashboard auth token:');
+            if (token) {
+                localStorage.setItem('dashboard_token', token.trim());
+            }
+            return token;
+        }
+
+        async function authFetch(url) {
+            const token = getToken();
+            const res = await fetch(url, {
+                headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+            });
+            if (res.status === 401) {
+                promptToken();
+                const newToken = getToken();
+                return fetch(url, {
+                    headers: newToken ? { 'Authorization': 'Bearer ' + newToken } : {},
+                });
+            }
+            return res;
+        }
+
         // ======================== Chart setup ========================
         let equityChart = null;
 
@@ -320,7 +348,7 @@
         // ======================== Data fetching ========================
         async function fetchStatus() {
             try {
-                const res = await fetch(API_BASE + '/api/status');
+                const res = await authFetch(API_BASE + '/api/status');
                 const data = await res.json();
                 updateMetrics(data);
                 updatePositions(data.open_positions || []);
@@ -331,7 +359,7 @@
 
         async function fetchEquity() {
             try {
-                const res = await fetch(API_BASE + '/api/equity');
+                const res = await authFetch(API_BASE + '/api/equity');
                 const data = await res.json();
                 updateChart(data.equity_curve || []);
             } catch (e) {
@@ -341,7 +369,7 @@
 
         async function fetchTrades() {
             try {
-                const res = await fetch(API_BASE + '/api/trades?limit=20');
+                const res = await authFetch(API_BASE + '/api/trades?limit=20');
                 const data = await res.json();
                 updateTrades(data.trades || []);
             } catch (e) {

@@ -103,8 +103,9 @@ def main():
     strategy = strategy_cls()
     strategy.setup(config.strategy)
 
-    # Create risk manager
-    risk_mgr = RiskManager(config.risk, portfolio)
+    # Create risk manager (leverage must match backtest!)
+    leverage = config.pairs[0].leverage if config.pairs else 1
+    risk_mgr = RiskManager(config.risk, portfolio, leverage=leverage)
 
     # Create Telegram notifier (optional — silent if no env vars)
     notifier = TelegramNotifier()

@@ -41,6 +41,15 @@ loggers:
     level: INFO
     handlers: [trades, console]
     propagate: false
+  # Suppress httpx/httpcore DEBUG logs (leak Telegram token in URLs)
+  httpx:
+    level: WARNING
+    handlers: [file]
+    propagate: false
+  httpcore:
+    level: WARNING
+    handlers: [file]
+    propagate: false
 
 root:
   level: WARNING

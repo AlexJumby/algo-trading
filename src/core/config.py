@@ -104,8 +104,32 @@ class AppConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> AppConfig:
-        with open(path) as f:
-            raw = yaml.safe_load(f)
+        p = Path(path)
+
+        if not p.exists():
+            raise ConfigError(
+                f"Config file not found: {p.resolve()}\n"
+                f"Hint: copy config/settings.example.yaml to {p}"
+            )
+
+        if p.is_dir():
+            raise ConfigError(
+                f"Config path is a directory, not a file: {p.resolve()}\n"
+                "This usually happens when Docker bind-mounts a missing file. "
+                f"Ensure {p} exists on the host before running docker-compose up."
+            )
+
+        try:
+            with open(p) as f:
+                raw = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ConfigError(f"Invalid YAML in {p}: {e}") from e
+
+        if not isinstance(raw, dict):
+            raise ConfigError(
+                f"Config file {p} is empty or not a YAML mapping. "
+                f"Got: {type(raw).__name__}"
+            )
 
         if os.getenv("BYBIT_API_KEY"):
             raw.setdefault("exchange", {})["api_key"] = os.getenv("BYBIT_API_KEY")
@@ -113,3 +137,8 @@ class AppConfig(BaseModel):
             raw.setdefault("exchange", {})["api_secret"] = os.getenv("BYBIT_API_SECRET")
 
         return cls(**raw)
+
+
+class ConfigError(Exception):
+    """Raised when config file is missing, invalid, or malformed."""
+    pass

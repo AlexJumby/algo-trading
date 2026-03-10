@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 import pandas as pd
 
 from src.core.config import TIMEFRAME_MS
+from src.core.exceptions import ExchangeError
 from src.utils.logger import get_logger
 
 logger = get_logger("feed")
@@ -89,9 +90,17 @@ class CcxtDataFeed(DataFeed):
         cursor = start_ms
 
         while cursor < now_ms:
-            batch = self.client.fetch_ohlcv(
-                symbol, timeframe, since=cursor, limit=self.MAX_PER_REQUEST,
-            )
+            try:
+                batch = self.client.fetch_ohlcv(
+                    symbol, timeframe, since=cursor, limit=self.MAX_PER_REQUEST,
+                )
+            except ExchangeError as e:
+                # Graceful degradation: return what we have so far
+                logger.warning(
+                    f"Batch fetch failed for {symbol} at cursor={cursor}: {e}. "
+                    f"Returning {len(all_frames)} batches already fetched."
+                )
+                break
             if batch.empty:
                 break
 

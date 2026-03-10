@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import time
 
 import ccxt
@@ -13,6 +14,44 @@ from src.exchange.base import ExchangeClient
 from src.utils.logger import get_logger
 
 logger = get_logger("exchange.bybit")
+
+# ── Transient error classification ───────────────────────────────────
+_TRANSIENT_ERRORS = (
+    ccxt.NetworkError,
+    ccxt.ExchangeNotAvailable,
+    ccxt.RateLimitExceeded,
+    ccxt.RequestTimeout,
+    ccxt.DDoSProtection,
+)
+
+
+def retry_on_transient(max_attempts: int = 3, base_delay: float = 2.0):
+    """Retry on transient ccxt errors with exponential backoff.
+
+    Only for read-only methods — never for order creation/cancellation.
+    """
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            last_exc = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return fn(*args, **kwargs)
+                except _TRANSIENT_ERRORS as e:
+                    last_exc = e
+                    if attempt < max_attempts:
+                        delay = base_delay * (2 ** (attempt - 1))
+                        logger.warning(
+                            f"{fn.__name__} transient error (attempt {attempt}/{max_attempts}): "
+                            f"{type(e).__name__}. Retrying in {delay:.1f}s..."
+                        )
+                        time.sleep(delay)
+            # All attempts exhausted
+            raise ExchangeError(
+                f"{fn.__name__} failed after {max_attempts} attempts: {last_exc}"
+            ) from last_exc
+        return wrapper
+    return decorator
 
 
 class BybitClient(ExchangeClient):
@@ -48,6 +87,7 @@ class BybitClient(ExchangeClient):
             raise ExchangeError("Exchange not connected. Call connect() first.")
         return self._exchange
 
+    @retry_on_transient()
     def fetch_ohlcv(
         self,
         symbol: str,
@@ -71,12 +111,14 @@ class BybitClient(ExchangeClient):
             df[col] = df[col].astype(float)
         return df
 
+    @retry_on_transient()
     def fetch_ticker(self, symbol: str) -> dict:
         try:
             return self.exchange.fetch_ticker(symbol)
         except ccxt.BaseError as e:
             raise ExchangeError(f"Failed to fetch ticker for {symbol}: {e}") from e
 
+    @retry_on_transient()
     def fetch_balance(self) -> dict:
         try:
             return self.exchange.fetch_balance()
@@ -129,6 +171,7 @@ class BybitClient(ExchangeClient):
         except ccxt.BaseError as e:
             raise ExchangeError(f"Failed to cancel order {order_id}: {e}") from e
 
+    @retry_on_transient()
     def fetch_positions(self, symbol: str | None = None) -> list[Position]:
         try:
             if symbol:
@@ -164,6 +207,7 @@ class BybitClient(ExchangeClient):
             # Some exchanges throw if leverage is already set
             logger.warning(f"Set leverage warning for {symbol}: {e}")
 
+    @retry_on_transient()
     def fetch_funding_rate(self, symbol: str) -> dict:
         """Fetch the current funding rate for a perpetual contract.
 

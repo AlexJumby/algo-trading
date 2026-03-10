@@ -1,14 +1,16 @@
 """Trading bot dashboard — FastAPI backend.
 
 Reads portfolio.db (written by the bot) and serves JSON + static HTML.
+Protected by Bearer token authentication.
 """
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.portfolio.persistence import PortfolioDB
@@ -19,7 +21,36 @@ logger = get_logger("dashboard")
 
 DB_PATH = os.getenv("PORTFOLIO_DB_PATH", "data/portfolio.db")
 
+# Auth token: from env or auto-generated
+AUTH_TOKEN = os.getenv("DASHBOARD_TOKEN") or secrets.token_urlsafe(32)
+if not os.getenv("DASHBOARD_TOKEN"):
+    # Print to stdout so operator can see token at startup
+    print(f"[Dashboard] Generated auth token: {AUTH_TOKEN}")  # noqa: T201
+
 app = FastAPI(title="Algo Trading Dashboard")
+
+# ── Auth middleware ───────────────────────────────────────────────────
+# Exempt paths: static assets, root page, health check
+_PUBLIC_PREFIXES = ("/static", "/api/health", "/docs", "/openapi.json")
+
+
+@app.middleware("http")
+async def token_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # Allow public paths (static files, index, health)
+    if path == "/" or path.startswith(_PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    # Check Bearer token
+    auth_header = request.headers.get("authorization", "")
+    if auth_header == f"Bearer {AUTH_TOKEN}":
+        return await call_next(request)
+
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "Unauthorized — provide Authorization: Bearer <token>"},
+    )
+
 
 # Serve static files (index.html, etc.)
 STATIC_DIR = Path(__file__).parent / "static"

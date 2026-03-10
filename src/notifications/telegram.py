@@ -28,6 +28,8 @@ class TelegramNotifier:
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
         self.enabled = bool(self.token and self.chat_id)
         self._client: httpx.Client | None = None
+        # Cache full URL once — never log it or the token
+        self._url: str = self.API_URL.format(token=self.token) if self.token else ""
 
         if self.enabled:
             self._client = httpx.Client(timeout=10)
@@ -45,7 +47,7 @@ class TelegramNotifier:
             return
         try:
             resp = self._client.post(
-                self.API_URL.format(token=self.token),
+                self._url,
                 json={
                     "chat_id": self.chat_id,
                     "text": message,
@@ -54,11 +56,10 @@ class TelegramNotifier:
                 },
             )
             if resp.status_code != 200:
-                logger.warning(
-                    f"Telegram API {resp.status_code}: {resp.text[:200]}"
-                )
+                # Never log resp.text — it may contain the token in error details
+                logger.warning(f"Telegram API error: HTTP {resp.status_code}")
         except Exception as e:
-            logger.warning(f"Telegram send failed: {e}")
+            logger.warning(f"Telegram send failed: {type(e).__name__}")
 
     # ------------------------------------------------------------------
     # High-level event methods
