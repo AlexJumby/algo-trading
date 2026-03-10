@@ -16,11 +16,11 @@ Open-source quantitative trading system for crypto perpetual futures on Bybit.
 
 ## Current Status
 
-- **Version:** v0.4.1
+- **Version:** v0.4.2
 - **Mode:** Paper trading on Bybit testnet
-- **Tests:** 209 passing
+- **Tests:** 226 passing
 - **Strategy:** TSMOM (Time-Series Momentum)
-- **Code reviews:** 4 rounds completed
+- **Code reviews:** 4 rounds + security hardening completed
 
 ## Backtest Performance (730 days)
 

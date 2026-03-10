@@ -130,3 +130,11 @@ Tracks PnL, equity, and performance metrics.
 9. **Shared stop logic** — `check_stops()` lives in base `Broker` class (not duplicated per broker), and `trail_stop()` is a standalone function in `execution/stops.py` used by both engines.
 
 10. **Stop gap slippage** — when SL/TP triggers, fill is at market price (not the stop level). If price gaps through $78K SL to $75K, fill is at $75K. More realistic than assuming fills at exact stop levels.
+
+11. **Dashboard Bearer auth** — all `/api/*` endpoints (except `/api/health`) require `Authorization: Bearer <token>`. Token is auto-generated at startup or set via `DASHBOARD_TOKEN` env var. Prevents unauthorized access to portfolio data.
+
+12. **Token redaction in logs** — `TokenRedactingFilter` scrubs Telegram bot tokens from all log records (msg + args). httpx/httpcore loggers forced to WARNING level in code (not just YAML) as defense-in-depth against URL-leaked tokens.
+
+13. **Retry with exponential backoff** — `@retry_on_transient` decorator on read-only exchange methods (fetch_ohlcv, fetch_ticker, fetch_balance, fetch_positions, fetch_funding_rate). Retries on `NetworkError`, `RateLimitExceeded`, `RequestTimeout`, `DDoSProtection`. **Not** applied to `create_order`/`cancel_order` to avoid double execution risk. Delays: 2s → 4s → 8s.
+
+14. **Config validation** — `from_yaml()` checks: file exists (not Docker directory), valid YAML, non-empty dict. Clear error messages with hints (e.g., "ensure file exists on host before docker-compose up").

@@ -50,7 +50,7 @@ python scripts/run_backtest.py --symbol "ETH/USDT:USDT" --data data/ETHUSDT_USDT
 python -m pytest --tb=short -q
 ```
 
-Expected: 209 tests passing.
+Expected: 226 tests passing.
 
 ## Run Validation Suite
 

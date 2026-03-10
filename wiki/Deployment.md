@@ -71,13 +71,32 @@ docker compose down
 
 Accessible at `http://your-vps-ip:8080`.
 
-Features:
+### Authentication
+
+The dashboard is protected by Bearer token auth. All `/api/*` endpoints (except `/api/health`) require a valid token.
+
+**Getting the token:**
+- Auto-generated at startup — visible in dashboard container logs:
+  ```bash
+  docker compose logs algo-trading-dashboard | head -10
+  # Look for: DASHBOARD AUTH TOKEN: <token>
+  ```
+- Or set a fixed token via env var in `docker-compose.yml`:
+  ```yaml
+  environment:
+    - DASHBOARD_TOKEN=your-fixed-secret-token
+  ```
+
+The web UI prompts for the token on first visit and saves it in `localStorage`.
+
+### Features
+
 - Real-time equity curve chart
 - Open positions table
 - Recent trades history
 - Portfolio status (equity, cash, drawdown)
 
-Built with FastAPI + HTMX. Auto-refreshes every 60 seconds.
+Built with FastAPI + Bearer token auth. Auto-refreshes every 60 seconds.
 
 ## Telegram Notifications
 
@@ -139,4 +158,8 @@ Add these secrets in GitHub (Settings > Secrets > Actions):
 - Always use **testnet** keys for paper trading
 - Never commit `.env` files (already in `.gitignore`)
 - `settings.yaml` is in `.gitignore` — use `git add -f` to push config changes
-- Dashboard has no authentication — restrict access via firewall or reverse proxy
+- **Dashboard auth** — Bearer token required for all API endpoints (auto-generated or `DASHBOARD_TOKEN` env var)
+- **Token redaction** — Telegram bot tokens are automatically scrubbed from all log output (`TokenRedactingFilter`)
+- **httpx suppressed** — httpx/httpcore loggers forced to WARNING level to prevent token leak via URL logging
+- **Config validation** — clear error if `settings.yaml` is missing or Docker creates a directory instead of bind-mounting a file
+- **API retry** — transient exchange errors (network, rate limit, timeout) are retried with exponential backoff; order creation is never retried

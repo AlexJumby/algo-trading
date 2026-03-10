@@ -1,10 +1,10 @@
-# Algo Trading System v0.4.1
+# Algo Trading System v0.4.2
 
 Quantitative trading system for crypto perpetual futures (Bybit). Designed with fund-level architecture: signal layer, risk layer, execution layer, portfolio layer, infrastructure layer.
 
 **Active strategy:** TSMOM (Time-Series Momentum + Volatility Management) — based on Moskowitz, Ooi, Pedersen (2012), used by AQR Capital and Man Group.
 
-**Status:** Paper trading on Bybit testnet. Robustness validated (walk-forward, Monte Carlo, regime segmentation). Four code review rounds completed. 209 tests, Docker + CI/CD.
+**Status:** Paper trading on Bybit testnet. Robustness validated (walk-forward, Monte Carlo, regime segmentation). Four code review rounds + security hardening completed. 226 tests, Docker + CI/CD.
 
 ---
 
@@ -93,9 +93,13 @@ Infrastructure Layer                                                v
 ### Infrastructure
 - **Docker deployment** — single `docker compose up -d`
 - **Telegram notifications** — trade open/close, trailing stop, 4h status, degradation alerts
-- **Web dashboard** — real-time equity curve, positions, trades (FastAPI + HTMX)
+- **Web dashboard** — real-time equity curve, positions, trades (FastAPI + Bearer token auth)
+- **Dashboard auth** — Bearer token middleware, auto-generated or from `DASHBOARD_TOKEN` env var
+- **Token redaction** — `TokenRedactingFilter` scrubs Telegram bot tokens from all log output
+- **API retry** — `@retry_on_transient` with exponential backoff on read-only exchange methods (not on order creation)
+- **Config validation** — clear errors for missing file, Docker bind-mount directory, invalid YAML
 - **CI/CD** — GitHub Actions: test on push, auto-deploy to VPS
-- **209 tests** — strategies, indicators, risk, portfolio, regime filter, deleveraging, rolling metrics, validation scripts, safety checks
+- **226 tests** — strategies, indicators, risk, portfolio, regime filter, deleveraging, rolling metrics, safety checks, security tests
 
 ---
 
@@ -199,12 +203,13 @@ risk:
   drawdown_soft_pct: 0.10         # Start deleveraging at 10% DD
 ```
 
-### API Keys (env vars recommended)
+### API Keys & Dashboard (env vars)
 ```bash
 export BYBIT_API_KEY=your_key
 export BYBIT_API_SECRET=your_secret
 export TELEGRAM_BOT_TOKEN=your_bot_token
 export TELEGRAM_CHAT_ID=your_chat_id
+export DASHBOARD_TOKEN=your_secret_token   # optional, auto-generated if empty
 ```
 
 ---
@@ -290,7 +295,7 @@ algo_trading/
 │       ├── feed.py                     # Data feed (historical + live)
 │       └── historical.py               # CSV data management
 ├── scripts/                            # Entry points + analysis tools
-├── tests/                              # 209 tests
+├── tests/                              # 226 tests
 ├── dashboard/                          # Web UI (FastAPI + HTMX)
 ├── docker-compose.yml
 ├── Dockerfile
@@ -305,7 +310,8 @@ algo_trading/
 
 | Version | Date | Changes |
 |---------|------|---------|
-| **v0.4.1** | 2026-03-10 | Code review v4: trail_stop ATR clamp, breakout CLOSE logic fix, stop gap slippage, 17 safety tests |
+| **v0.4.2** | 2026-03-10 | Security hardening: dashboard Bearer auth, Telegram token leak fix, API retry with backoff, config validation, leverage mismatch fix |
+| v0.4.1 | 2026-03-10 | Code review v4: trail_stop ATR clamp, breakout CLOSE logic fix, stop gap slippage, 17 safety tests |
 | v0.4.0 | 2026-03-09 | Code review v2-v3: ATR/SL clamp, per-symbol state, O(1) drawdown, stop dedup, data gap detection, snapshot fix |
 | v0.3.1 | 2026-03-03 | Walk-forward validation, Monte Carlo CI, regime-segmented backtest |
 | v0.3.0 | 2026-03-03 | Regime filter, drawdown deleveraging, rolling monitors, param sensitivity |
@@ -323,10 +329,11 @@ algo_trading/
 - [x] Regime-segmented backtest (bull +83%, bear +55%, chop -42%)
 - [ ] 4-8 weeks paper trading track record (in progress)
 
-### Phase 1.3 — Code Review Hardening ✅
+### Phase 1.3 — Code Review & Security Hardening ✅
 - [x] Code review round 1: O(1) drawdown, check_stops dedup, trail_stop extraction, encapsulation fixes
 - [x] Code review round 2: ATR/SL clamp, per-symbol TSMOM state, snapshot dedup, data gap detection, sync_state on restart
 - [x] Code review round 4: trail_stop ATR clamp, breakout CLOSE logic, breakout/momentum per-symbol state, stop gap slippage, 17 safety tests
+- [x] Security hardening: dashboard auth, token redaction, API retry, config validation, leverage mismatch fix
 
 ### Phase 2 — Multi-Strategy
 - [ ] Mean reversion strategy (for choppy markets)
