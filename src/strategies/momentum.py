@@ -261,7 +261,7 @@ class MomentumV3Strategy(BaseStrategy):
         self.atr_sl_mult = params.get("atr_sl_mult", 1.5)
         self.cooldown_bars = params.get("cooldown_bars", 10)
 
-        self._bars_since_close = 999  # start ready to trade
+        self._state: dict[str, dict] = {}  # per-symbol state
 
         self.indicators = [
             EMAIndicator(self.fast_period),
@@ -272,13 +272,19 @@ class MomentumV3Strategy(BaseStrategy):
             ATRIndicator(self.atr_period),
         ]
 
+    def _get_state(self, symbol: str) -> dict:
+        if symbol not in self._state:
+            self._state[symbol] = {"bars_since_close": 999}
+        return self._state[symbol]
+
     def on_fill(self, fill) -> None:
         """Reset cooldown counter on close fills."""
-        # Any fill triggers cooldown reset — the engine calls on_fill for opens and closes
-        self._bars_since_close = 0
+        st = self._get_state(fill.symbol)
+        st["bars_since_close"] = 0
 
     def generate_signals(self, df: pd.DataFrame, symbol: str = "") -> list[Signal]:
-        self._bars_since_close += 1
+        st = self._get_state(symbol)
+        st["bars_since_close"] += 1
 
         if len(df) < 3:
             return []
@@ -309,7 +315,7 @@ class MomentumV3Strategy(BaseStrategy):
         cross_down = prev[fast_col] >= prev[slow_col] and curr[fast_col] < curr[slow_col]
 
         signals = []
-        in_cooldown = self._bars_since_close < self.cooldown_bars
+        in_cooldown = st["bars_since_close"] < self.cooldown_bars
 
         # ---- LONG entry ----
         if (cross_up

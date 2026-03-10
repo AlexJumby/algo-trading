@@ -64,7 +64,9 @@ class Broker(ABC):
 
             if hit_sl or hit_tp:
                 close_side = Side.SELL if pos.side == Side.BUY else Side.BUY
-                exit_price = pos.stop_loss if hit_sl else pos.take_profit
+                # Use market price for fill (not SL/TP level) to model
+                # gap slippage: if price gaps through SL, fill is worse.
+                exit_price = price
 
                 close_order = Order(
                     symbol=symbol,
@@ -80,8 +82,11 @@ class Broker(ABC):
                 if fill:
                     fills.append(fill)
                     trigger = "SL" if hit_sl else "TP"
+                    sl_tp_level = pos.stop_loss if hit_sl else pos.take_profit
                     logger.info(
-                        f"{trigger} hit for {symbol}: exit at {exit_price:.2f}"
+                        f"{trigger} hit for {symbol}: "
+                        f"level={sl_tp_level:.2f}, "
+                        f"fill={exit_price:.2f}"
                     )
 
         return fills

@@ -20,7 +20,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.core.config import StrategyConfig
-from src.core.enums import SignalAction
+from src.core.enums import Side, SignalAction
 from src.core.models import Fill, Signal
 from src.indicators.adx import ADXIndicator
 from src.indicators.atr import ATRIndicator
@@ -58,8 +58,7 @@ class BreakoutTrendStrategy(BaseStrategy):
         self.bb_period = p.get("bb_period", 20)
         self.bb_squeeze_threshold = p.get("bb_squeeze_threshold", 0.0)  # 0 = disabled
 
-        self._bars_since_fill = 999
-        self._last_position_side = None  # track to avoid re-entry same direction
+        self._state: dict[str, dict] = {}  # per-symbol state
 
         self.indicators = [
             DonchianChannel(self.dc_entry_period),
@@ -70,11 +69,39 @@ class BreakoutTrendStrategy(BaseStrategy):
             BollingerBands(self.bb_period),
         ]
 
+    def _get_state(self, symbol: str) -> dict:
+        if symbol not in self._state:
+            self._state[symbol] = {
+                "bars_since_fill": 999,
+                "in_position": False,
+                "position_side": None,  # "long" or "short"
+            }
+        return self._state[symbol]
+
     def on_fill(self, fill: Fill) -> None:
-        self._bars_since_fill = 0
+        st = self._get_state(fill.symbol)
+        st["bars_since_fill"] = 0
+        if st["in_position"]:
+            st["in_position"] = False
+            st["position_side"] = None
+        else:
+            st["in_position"] = True
+            st["position_side"] = (
+                "long" if fill.side == Side.BUY else "short"
+            )
+
+    def sync_state(self, portfolio) -> None:
+        """Sync strategy state with actual portfolio on restart."""
+        for symbol, pos in portfolio.open_positions.items():
+            st = self._get_state(symbol)
+            st["in_position"] = True
+            st["position_side"] = (
+                "long" if pos.side == Side.BUY else "short"
+            )
 
     def generate_signals(self, df: pd.DataFrame, symbol: str = "") -> list[Signal]:
-        self._bars_since_fill += 1
+        st = self._get_state(symbol)
+        st["bars_since_fill"] += 1
 
         if len(df) < 3:
             return []
@@ -116,7 +143,7 @@ class BreakoutTrendStrategy(BaseStrategy):
         if prev_dc_high is None or prev_dc_low is None:
             return []
 
-        in_cooldown = self._bars_since_fill < self.cooldown_bars
+        in_cooldown = st["bars_since_fill"] < self.cooldown_bars
 
         # BB squeeze filter (optional)
         squeeze_ok = True
@@ -182,17 +209,24 @@ class BreakoutTrendStrategy(BaseStrategy):
             ))
 
         # ---- EXIT: price crosses Donchian midline against position ----
-        # (only if no new entry signal generated this bar)
-        if not signals:
-            # For longs: exit if close drops below exit Donchian midline
-            # For shorts: exit if close rises above exit Donchian midline
-            if close < dc_mid or close > dc_mid:
+        # (only if no new entry signal and we're in a position)
+        if not signals and st["in_position"]:
+            should_exit = False
+            if st["position_side"] == "long" and close < dc_mid:
+                should_exit = True
+            elif st["position_side"] == "short" and close > dc_mid:
+                should_exit = True
+
+            if should_exit:
                 signals.append(Signal(
                     timestamp=int(curr["timestamp"]),
                     symbol="",
                     action=SignalAction.CLOSE,
                     strength=1.0,
-                    metadata={"trigger": "donchian_mid_exit", "dc_mid": dc_mid},
+                    metadata={
+                        "trigger": "donchian_mid_exit",
+                        "dc_mid": dc_mid,
+                    },
                 ))
 
         return signals

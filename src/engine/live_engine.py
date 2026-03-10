@@ -186,9 +186,6 @@ class LiveEngine:
                 logger.info(f"Synced {len(exchange_positions)} position(s) from exchange")
             else:
                 logger.info("No open positions on exchange")
-
-            # Sync strategy state with restored positions
-            self.strategy.sync_state(self.portfolio)
         except Exception as e:
             logger.warning(f"Could not sync positions: {e}")
 

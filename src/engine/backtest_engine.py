@@ -183,7 +183,10 @@ class BacktestEngine:
             task = progress.add_task(f"Backtesting {symbol}", total=total_bars)
 
             while not self.data_feed.is_exhausted:
-                df = self.data_feed.get_latest_bars(symbol, "1h", lookback)
+                tf = self.config.strategy.params.get(
+                    "timeframe", self.config.pairs[0].timeframe,
+                )
+                df = self.data_feed.get_latest_bars(symbol, tf, lookback)
                 current_price = self.data_feed.get_current_price(symbol)
                 timestamp = self.data_feed.current_timestamp
 
