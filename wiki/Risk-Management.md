@@ -110,14 +110,31 @@ This ensures no stop-loss is ever placed more than 15% away from entry, regardle
 The stop moves in the direction of profit (never against). Logic is shared via `trail_stop()` in `execution/stops.py`, used by both backtest and live engines:
 
 ```
-LONG:  new_stop = current_price - ATR(14) * 3.5
+distance = ATR(14) * 3.5
+max_distance = price * 0.15          # same 15% clamp as entry SL
+distance = min(distance, max_distance)
+
+LONG:  new_stop = current_price - distance
        if new_stop > current_stop: update
 
-SHORT: new_stop = current_price + ATR(14) * 3.5
+SHORT: new_stop = current_price + distance
        if new_stop < current_stop: update
 ```
 
+The same 15% ATR clamp applies to trailing stops — without it, a data gap during a live session would push the trailing stop to an absurd level, effectively disabling it.
+
 No fixed take-profit. The trailing stop lets winners run while protecting profits.
+
+### Stop Gap Slippage
+
+When a stop-loss or take-profit is triggered, the fill is executed at the **market price** (not the SL/TP level). This models real gap slippage:
+
+```
+SL = $78,000, but price gaps to $75,000
+→ fill at $75,000 (not $78,000)
+```
+
+This gives more realistic backtest results — stops in volatile markets often fill worse than the level.
 
 ### Data Gap Protection
 

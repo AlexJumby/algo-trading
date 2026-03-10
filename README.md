@@ -1,10 +1,10 @@
-# Algo Trading System v0.4.0
+# Algo Trading System v0.4.1
 
 Quantitative trading system for crypto perpetual futures (Bybit). Designed with fund-level architecture: signal layer, risk layer, execution layer, portfolio layer, infrastructure layer.
 
 **Active strategy:** TSMOM (Time-Series Momentum + Volatility Management) — based on Moskowitz, Ooi, Pedersen (2012), used by AQR Capital and Man Group.
 
-**Status:** Paper trading on Bybit testnet. Robustness validated (walk-forward, Monte Carlo, regime segmentation). Two code review rounds completed. 192 tests, Docker + CI/CD.
+**Status:** Paper trading on Bybit testnet. Robustness validated (walk-forward, Monte Carlo, regime segmentation). Four code review rounds completed. 209 tests, Docker + CI/CD.
 
 ---
 
@@ -95,7 +95,7 @@ Infrastructure Layer                                                v
 - **Telegram notifications** — trade open/close, trailing stop, 4h status, degradation alerts
 - **Web dashboard** — real-time equity curve, positions, trades (FastAPI + HTMX)
 - **CI/CD** — GitHub Actions: test on push, auto-deploy to VPS
-- **192 tests** — strategies, indicators, risk, portfolio, regime filter, deleveraging, rolling metrics, validation scripts
+- **209 tests** — strategies, indicators, risk, portfolio, regime filter, deleveraging, rolling metrics, validation scripts, safety checks
 
 ---
 
@@ -290,7 +290,7 @@ algo_trading/
 │       ├── feed.py                     # Data feed (historical + live)
 │       └── historical.py               # CSV data management
 ├── scripts/                            # Entry points + analysis tools
-├── tests/                              # 192 tests
+├── tests/                              # 209 tests
 ├── dashboard/                          # Web UI (FastAPI + HTMX)
 ├── docker-compose.yml
 ├── Dockerfile
@@ -305,7 +305,8 @@ algo_trading/
 
 | Version | Date | Changes |
 |---------|------|---------|
-| **v0.4.0** | 2026-03-09 | Code review refactoring: ATR/SL clamp, per-symbol state, O(1) drawdown, stop dedup, data gap detection, snapshot fix |
+| **v0.4.1** | 2026-03-10 | Code review v4: trail_stop ATR clamp, breakout CLOSE logic fix, stop gap slippage, 17 safety tests |
+| v0.4.0 | 2026-03-09 | Code review v2-v3: ATR/SL clamp, per-symbol state, O(1) drawdown, stop dedup, data gap detection, snapshot fix |
 | v0.3.1 | 2026-03-03 | Walk-forward validation, Monte Carlo CI, regime-segmented backtest |
 | v0.3.0 | 2026-03-03 | Regime filter, drawdown deleveraging, rolling monitors, param sensitivity |
 | v0.2.0 | 2026-03-02 | Timeframe normalization, EWMA vol, realistic fees/funding/slippage |
@@ -324,7 +325,8 @@ algo_trading/
 
 ### Phase 1.3 — Code Review Hardening ✅
 - [x] Code review round 1: O(1) drawdown, check_stops dedup, trail_stop extraction, encapsulation fixes
-- [x] Code review round 2: ATR/SL clamp, per-symbol strategy state, snapshot dedup, data gap detection, sync_state on restart
+- [x] Code review round 2: ATR/SL clamp, per-symbol TSMOM state, snapshot dedup, data gap detection, sync_state on restart
+- [x] Code review round 4: trail_stop ATR clamp, breakout CLOSE logic, breakout/momentum per-symbol state, stop gap slippage, 17 safety tests
 
 ### Phase 2 — Multi-Strategy
 - [ ] Mean reversion strategy (for choppy markets)

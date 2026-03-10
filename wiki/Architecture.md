@@ -128,3 +128,5 @@ Tracks PnL, equity, and performance metrics.
 8. **Data gap detection** — after paginated OHLCV fetch, timestamps are checked for gaps > 3x expected interval. Warning is logged so operators know indicators may be unreliable.
 
 9. **Shared stop logic** — `check_stops()` lives in base `Broker` class (not duplicated per broker), and `trail_stop()` is a standalone function in `execution/stops.py` used by both engines.
+
+10. **Stop gap slippage** — when SL/TP triggers, fill is at market price (not the stop level). If price gaps through $78K SL to $75K, fill is at $75K. More realistic than assuming fills at exact stop levels.
