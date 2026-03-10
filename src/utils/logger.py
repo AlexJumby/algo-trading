@@ -61,6 +61,11 @@ def setup_logging(config_path: str = "config/logging.yaml", log_level: str = "IN
             for handler in lg.handlers:
                 handler.addFilter(redact_filter)
 
+    # Suppress httpx/httpcore DEBUG/INFO — they log full URLs including
+    # Telegram bot tokens. Force WARNING regardless of logging.yaml state.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
     root = logging.getLogger("algo_trading")
     root.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
