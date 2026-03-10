@@ -10,14 +10,27 @@ _TOKEN_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]{20,}")
 
 
 class TokenRedactingFilter(logging.Filter):
-    """Scrub Telegram bot tokens from all log records."""
+    """Scrub Telegram bot tokens from log records.
+
+    Redacts token patterns in both msg and args without consuming args,
+    so third-party formatters (e.g. uvicorn AccessFormatter) still work.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.args:
-            # Format the message early so we can redact it
-            record.msg = str(record.msg) % record.args
-            record.args = None
+        # Redact the message template itself
         record.msg = _TOKEN_RE.sub("[REDACTED]", str(record.msg))
+        # Redact any string arguments (without removing args)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {
+                    k: _TOKEN_RE.sub("[REDACTED]", str(v)) if isinstance(v, str) else v
+                    for k, v in record.args.items()
+                }
+            elif isinstance(record.args, tuple):
+                record.args = tuple(
+                    _TOKEN_RE.sub("[REDACTED]", str(a)) if isinstance(a, str) else a
+                    for a in record.args
+                )
         return True
 
 
@@ -37,7 +50,9 @@ def setup_logging(config_path: str = "config/logging.yaml", log_level: str = "IN
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
-    # Apply token redaction filter to ALL handlers
+    # Apply token redaction filter to root and algo_trading handlers.
+    # Safe for all loggers (including uvicorn) because the filter
+    # no longer consumes record.args.
     redact_filter = TokenRedactingFilter()
     for handler in logging.root.handlers:
         handler.addFilter(redact_filter)

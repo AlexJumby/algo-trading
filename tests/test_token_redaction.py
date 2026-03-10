@@ -39,11 +39,15 @@ class TestTokenRedaction:
         assert "222" not in record.msg
         assert record.msg.count("[REDACTED]") == 2
 
-    def test_args_formatted_and_scrubbed(self):
+    def test_args_redacted_in_place(self):
+        """Token in args is redacted without consuming args (uvicorn compat)."""
         record = self._make_record(
             "Request to %s failed",
             ("https://api.telegram.org/bot999:ABCDEFGHIJ_klmnopqrst/sendMessage",),
         )
         self.filt.filter(record)
-        assert "[REDACTED]" in record.msg
-        assert record.args is None  # args consumed
+        # Args should still be a tuple (not None) — uvicorn needs them
+        assert isinstance(record.args, tuple)
+        # But the token inside should be scrubbed
+        assert "999" not in record.args[0]
+        assert "[REDACTED]" in record.args[0]

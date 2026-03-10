@@ -24,8 +24,11 @@ DB_PATH = os.getenv("PORTFOLIO_DB_PATH", "data/portfolio.db")
 # Auth token: from env or auto-generated
 AUTH_TOKEN = os.getenv("DASHBOARD_TOKEN") or secrets.token_urlsafe(32)
 if not os.getenv("DASHBOARD_TOKEN"):
-    # Print to stdout so operator can see token at startup
-    print(f"[Dashboard] Generated auth token: {AUTH_TOKEN}")  # noqa: T201
+    # Use print + flush so token is visible even under uvicorn buffering
+    import sys
+    print(f"\n{'='*60}", file=sys.stderr, flush=True)  # noqa: T201
+    print(f"  DASHBOARD AUTH TOKEN: {AUTH_TOKEN}", file=sys.stderr, flush=True)  # noqa: T201
+    print(f"{'='*60}\n", file=sys.stderr, flush=True)  # noqa: T201
 
 app = FastAPI(title="Algo Trading Dashboard")
 
