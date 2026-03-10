@@ -22,8 +22,8 @@ services:
     container_name: algo-trading-dashboard
     restart: unless-stopped
     ports:
-      # Bind to localhost only — not exposed to the network
-      - "127.0.0.1:8080:8080"
+      # Protected by Bearer token auth middleware (see DASHBOARD_TOKEN)
+      - "8080:8080"
     volumes:
       # Shared DB — бот пишет, дашборд читает (WAL mode)
       - ./data:/app/data:ro
